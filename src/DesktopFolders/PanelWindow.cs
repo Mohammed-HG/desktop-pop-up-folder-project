@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,6 +25,8 @@ internal sealed class PanelWindow : Window
     private readonly bool preview;
     private readonly Words words;
     private readonly bool animations;
+    private readonly Func<string[], bool>? import;
+    private readonly IReadOnlyList<Entry> externalEntries;
     private readonly Border surface = new();
     private readonly ScaleTransform scale = new(1, 1);
     private readonly Dictionary<Entry, (string Path, string Target, ImageSource Image)> icons = new();
@@ -37,13 +40,16 @@ internal sealed class PanelWindow : Window
     public Border Preview => surface;
     private string L(string en, string ar) => words.Get(en, ar);
 
-    public PanelWindow(Folder folder, Preferences preferences, Action<Entry> launch, Action save, bool preview = false)
+    public PanelWindow(Folder folder, Preferences preferences, Action<Entry> launch, Action save, bool preview = false,
+        Func<string[], bool>? import = null, IReadOnlyList<Entry>? externalEntries = null)
     {
         this.folder = folder;
         settings = folder.Panel;
         this.launch = launch;
         this.save = save;
         this.preview = preview;
+        this.import = import;
+        this.externalEntries = externalEntries ?? [];
         words = new(preferences.Arabic);
         animations = SystemParameters.ClientAreaAnimation && settings.Animation switch
         {
@@ -65,6 +71,21 @@ internal sealed class PanelWindow : Window
             surface.RenderTransform = scale;
             surface.RenderTransformOrigin = new(0.5, 0.15);
             Content = surface;
+            AllowDrop = import is not null;
+            PreviewDragOver += (_, e) =>
+            {
+                var supported = e.Data.GetDataPresent(DataFormats.FileDrop)
+                    || e.Data.GetDataPresent(DataFormats.UnicodeText);
+                e.Effects = supported && e.AllowedEffects.HasFlag(DragDropEffects.Copy)
+                    ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Handled = true;
+            };
+            PreviewDrop += (_, e) =>
+            {
+                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Copy) && Receive(e.Data)
+                    ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Handled = true;
+            };
             Deactivated += (_, _) => { if (positioned && settings.OutsideClose) Dismiss(); };
             PreviewKeyDown += OnKey;
             Closed += (_, _) => inactivity?.Stop();
@@ -129,10 +150,17 @@ internal sealed class PanelWindow : Window
                 ClampCurrent();
                 RememberPosition();
             };
+            var tools = new StackPanel { Orientation = Orientation.Horizontal };
+            var pin = new ToggleButton { Content = "📌", IsChecked = !settings.OutsideClose, MinWidth = 32, Margin = new(0, 0, 4, 0),
+                ToolTip = L("Keep open while dragging from Explorer", "إبقاء المجلد مفتوحًا أثناء السحب من مستكشف الملفات") };
+            System.Windows.Automation.AutomationProperties.SetName(pin, (string)pin.ToolTip);
+            pin.Click += (_, _) => { settings.OutsideClose = pin.IsChecked != true; save(); };
+            tools.Children.Add(pin);
             var close = Ui.Button(L("Close", "إغلاق"), Dismiss);
-            close.Margin = new(4, 0, 0, 0);
-            Grid.SetColumn(close, 1);
-            top.Children.Add(close);
+            close.Margin = new(0);
+            tools.Children.Add(close);
+            Grid.SetColumn(tools, 1);
+            top.Children.Add(tools);
         }
         DockPanel.SetDock(top, Dock.Top);
         content.Children.Add(top);
@@ -161,13 +189,23 @@ internal sealed class PanelWindow : Window
                 settings.Normalize();
                 RememberPosition();
             };
-            DockPanel.SetDock(resize, Dock.Bottom);
-            content.Children.Add(resize);
+            var footer = new DockPanel { LastChildFill = false };
+            DockPanel.SetDock(resize, Dock.Right);
+            footer.Children.Add(resize);
+            if (import is not null)
+            {
+                var paste = Ui.Button(L("Paste", "لصق"), Paste);
+                paste.Margin = new(0);
+                footer.Children.Add(paste);
+            }
+            DockPanel.SetDock(footer, Dock.Bottom);
+            content.Children.Add(footer);
         }
 
         var grid = new UniformGrid { Columns = settings.Columns, VerticalAlignment = VerticalAlignment.Top,
             Margin = new(0, 0, 2, 0) };
-        foreach (var entry in folder.Entries)
+        var configured = folder.Entries.Select(entry => entry.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in folder.Entries.Concat(externalEntries.Where(entry => !configured.Contains(entry.Target))))
         {
             var button = Tile(entry, foreground, labelFill);
             tiles.Add(button);
@@ -177,7 +215,8 @@ internal sealed class PanelWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = grid };
         if (tiles.Count == 0)
         {
-            var empty = Ui.Text(L("Add shortcuts in the folder manager.", "أضف اختصارات في مدير المجلدات."));
+            var empty = Ui.Text(L("Drag an app shortcut or file here, or press Ctrl+V to paste.",
+                "اسحب اختصار تطبيق أو ملفًا إلى هنا، أو اضغط Ctrl+V للصق."));
             empty.Padding = new(8);
             empty.Foreground = foreground;
             content.Children.Add(new Border { Background = labelFill, CornerRadius = new(8),
@@ -255,6 +294,12 @@ internal sealed class PanelWindow : Window
     private void OnKey(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape) { e.Handled = true; Dismiss(); return; }
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && import is not null)
+        {
+            e.Handled = true;
+            Paste();
+            return;
+        }
         var direction = words.Direction == FlowDirection.RightToLeft ? -1 : 1;
         var offset = e.Key switch
         {
@@ -265,6 +310,28 @@ internal sealed class PanelWindow : Window
         var index = Keyboard.FocusedElement is Button focused ? tiles.IndexOf(focused) : -1;
         tiles[index < 0 ? 0 : Math.Clamp(index + offset, 0, tiles.Count - 1)].Focus();
         e.Handled = true;
+    }
+
+    private void Paste()
+    {
+        try
+        {
+            if (Clipboard.GetDataObject() is { } data) Receive(data);
+        }
+        catch (ExternalException error) { WindowsServices.Log("paste-clipboard", error); }
+    }
+
+    internal bool Receive(IDataObject data)
+    {
+        if (import is null || closing) return false;
+        var paths = data.GetData(DataFormats.FileDrop) as string[];
+        if (paths is null && data.GetData(DataFormats.UnicodeText) is string text)
+            paths = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (paths is null || !import(paths)) return false;
+        ResetTimer();
+        Refresh();
+        if (tiles.Count != 0) tiles[^1].Focus();
+        return true;
     }
 
     public void ShowNear(Drawing.Point anchor)

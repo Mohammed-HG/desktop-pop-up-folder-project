@@ -11,6 +11,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using DesktopFolders.Core;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using Windows.Security.Credentials.UI;
 using Drawing = System.Drawing;
 
@@ -68,14 +69,16 @@ internal static class WindowsServices
         command.SetValue(null, $"\"{Executable}\" --new-folder");
     }
 
-    public static void SyncDesktop(Folder folder)
+    public static void SyncDesktop(Folder folder, string? directory = null)
     {
+        SyncLink(folder, directory);
         if (folder.ExplorerFolder && !folder.Locked)
-        {
-            ExplorerFolders.Sync(folder, Desktop);
-            RemoveLinks(folder.Id);
-        }
-        else SyncLink(folder);
+            ExplorerFolders.Sync(folder, directory ?? Desktop);
+    }
+
+    public static void ForwardForeground(SafePipeHandle pipe)
+    {
+        if (GetNamedPipeServerProcessId(pipe, out var processId)) AllowSetForegroundWindow(processId);
     }
 
     internal static string SafeName(string? name, string fallback)
@@ -148,7 +151,7 @@ internal static class WindowsServices
     {
         dynamic link = shell.CreateShortcut(path);
         return (string)link.Arguments == Arguments(id)
-            && (string)link.Description == "Desktop Folders";
+            && (string)link.Description is "Desktop Folders" or AboutWindow.AppName;
     }
 
     public static void RemoveLinks(Guid id, string? keep = null, string? directory = null)
@@ -170,7 +173,7 @@ internal static class WindowsServices
         dynamic link = shell.CreateShortcut(path);
         link.TargetPath = Executable;
         link.Arguments = Arguments(folder.Id);
-        link.Description = "Desktop Folders";
+        link.Description = AboutWindow.AppName;
         link.WorkingDirectory = AppContext.BaseDirectory;
         link.IconLocation = Executable + ",0";
         if (!string.IsNullOrWhiteSpace(folder.Icon) || !string.IsNullOrWhiteSpace(folder.IconColor))
@@ -179,7 +182,7 @@ internal static class WindowsServices
             {
                 if (IconPresets.Icon(folder.Icon, folder.IconColor) is { } bytes)
                 {
-                    var icon = Path.Combine(DataDirectory, $"{folder.Id:N}.ico");
+                    var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}.ico");
                     File.WriteAllBytes(icon, bytes);
                     link.IconLocation = icon + ",0";
                 }
@@ -198,7 +201,8 @@ internal static class WindowsServices
         foreach (var item in folder.Items())
         {
             string path = item.Path;
-            string target = Targets.Classify(path) == TargetKind.File ? path : Targets.AppsPrefix + path;
+            string target = Targets.Classify(path) == TargetKind.File && File.Exists(path)
+                ? path : Targets.AppsPrefix + path;
             if (Targets.Classify(target) != TargetKind.Invalid)
                 entries.Add(new() { Name = item.Name, Target = target });
         }
@@ -285,6 +289,8 @@ internal static class WindowsServices
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(string name, nint context, out nint pidl, uint mask, out uint attributes);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
+    [DllImport("kernel32.dll")] private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
+    [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(uint processId);
 }
 
 internal static class Hello

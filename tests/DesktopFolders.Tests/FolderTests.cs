@@ -97,11 +97,25 @@ public sealed class FolderTests
     }
 
     [TestMethod]
-    public void AcceptsAbsoluteShortcutFilesAndRejectsUnsupportedExtensions()
+    public void AcceptsAbsoluteAppAndDocumentPaths()
     {
         var root = Path.GetTempPath();
-        foreach (var extension in new[] { ".EXE", ".lnk", ".url" })
+        foreach (var extension in new[] { ".EXE", ".lnk", ".url", ".pdf", ".txt" })
             Assert.AreEqual(TargetKind.File, Targets.Classify(Path.Combine(root, "example" + extension)));
-        Assert.AreEqual(TargetKind.Invalid, Targets.Classify(Path.Combine(root, "example.bat")));
+    }
+
+    [TestMethod]
+    public void ImportsExistingFilesAndUrlsWithoutDuplicatingTargets()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var entries = Targets.NewEntries([path, path, Path.GetDirectoryName(path)!, "https://example.org/", "https://example.org"], []).ToArray();
+            Assert.HasCount(2, entries);
+            Assert.AreEqual(Path.GetFileName(path), entries[0].Name);
+            Assert.AreEqual("https://example.org/", entries[1].Target);
+            Assert.IsEmpty(Targets.NewEntries([path, "https://example.org"], entries));
+        }
+        finally { File.Delete(path); }
     }
 }

@@ -46,8 +46,8 @@ internal sealed class Editor : Window
             if (verifying) return;
             if (Draft.ExplorerFolder && Draft.Locked)
             {
-                MessageBox.Show(this, L("Turn off Windows Hello before converting to a Windows folder.",
-                    "أوقف Windows Hello قبل التحويل إلى مجلد Windows."));
+                MessageBox.Show(this, L("Turn off Windows Hello before adding a normal Windows folder.",
+                    "أوقف Windows Hello قبل إضافة مجلد Windows عادي."));
                 return;
             }
             if (!validName || !validColor)
@@ -124,11 +124,11 @@ internal sealed class Editor : Window
             UpdatePreview();
         };
         Row(body, L("Folder name", "اسم المجلد"), name);
-        var native = Check(body, L("Use a normal Windows folder on the desktop", "استخدام مجلد Windows عادي على سطح المكتب"),
+        var native = Check(body, L("Also create a normal Windows folder", "إنشاء مجلد Windows عادي أيضًا"),
             Draft.ExplorerFolder, value => Draft.ExplorerFolder = value);
         native.IsEnabled = !Draft.ExplorerFolder;
-        native.ToolTip = L("A Windows folder opens in File Explorer and supports files. Windows Hello is available for popup folders.",
-            "يفتح مجلد Windows في مستكشف الملفات ويدعم الملفات. يتوفر Windows Hello لمجلدات اللوحة المنبثقة.");
+        native.ToolTip = L("Also creates a normal Windows folder for files. The popup shortcut remains on the desktop.",
+            "ينشئ أيضًا مجلد Windows عاديًا للملفات. يبقى اختصار النافذة المنبثقة على سطح المكتب.");
         var icons = new WrapPanel();
         icons.Children.Add(Ui.Button(L("Folder icon color", "لون أيقونة المجلد"), () =>
         {
@@ -155,7 +155,7 @@ internal sealed class Editor : Window
         add.Children.Add(Ui.Button(L("Add files", "إضافة ملفات"), () =>
         {
             var picker = new OpenFileDialog { Multiselect = true,
-                Filter = L("App shortcuts (*.exe, *.lnk, *.url)|*.exe;*.lnk;*.url", "اختصارات التطبيقات (*.exe, *.lnk, *.url)|*.exe;*.lnk;*.url") };
+                Filter = L("All files (*.*)|*.*", "كل الملفات (*.*)|*.*") };
             if (picker.ShowDialog(this) == true) AddFiles(picker.FileNames);
         }));
         add.Children.Add(Ui.Button(L("Installed apps", "التطبيقات المثبتة"), ChooseApp));
@@ -282,8 +282,8 @@ internal sealed class Editor : Window
 
     private void AddFiles(string[] paths)
     {
-        foreach (var path in paths.Where(path => Targets.Classify(path) == TargetKind.File))
-            Draft.Entries.Add(new() { Name = Path.GetFileNameWithoutExtension(path), Target = path });
+        foreach (var entry in Targets.NewEntries(paths, Draft.Entries).ToArray())
+            Draft.Entries.Add(entry);
         UpdatePreview();
     }
 

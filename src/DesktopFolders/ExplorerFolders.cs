@@ -68,6 +68,22 @@ internal static class ExplorerFolders
         if (RegularFile(Path.Combine(directory, ManifestFile))) File.Delete(Path.Combine(directory, ManifestFile));
     }
 
+    public static IReadOnlyList<Entry> UserEntries(Guid id, string desktop)
+    {
+        if (Find(id, desktop) is not { } directory) return [];
+        var managed = ReadManifest(Path.Combine(directory, ManifestFile));
+        var files = Directory.EnumerateFiles(directory).Where(path =>
+        {
+            var attributes = File.GetAttributes(path);
+            var name = Path.GetFileName(path);
+            return (attributes & (FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint)) == 0
+                && !name.StartsWith(".desktopfolders-", StringComparison.OrdinalIgnoreCase)
+                && !name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)
+                && (!managed.TryGetValue(name, out var hash) || !IsOwned(directory, name, hash));
+        });
+        return Targets.NewEntries(files, []).ToArray();
+    }
+
     private static string UniqueDirectory(string desktop, string name, string? current)
     {
         var candidate = Path.Combine(desktop, name);

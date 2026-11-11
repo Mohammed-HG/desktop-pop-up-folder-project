@@ -49,7 +49,7 @@ public sealed class PanelSettings
     public Backdrop Background { get; set; }
     public string Color { get; set; } = "#30364C";
     public double Transparency { get; set; }
-    public bool OutsideClose { get; set; } = true;
+    public bool OutsideClose { get; set; }
     public AnimationChoice Animation { get; set; }
     public bool Hover { get; set; } = true;
     public int Duration { get; set; } = 140;
@@ -97,8 +97,36 @@ public static class Targets
         if (Uri.TryCreate(target, UriKind.Absolute, out var uri)
             && uri.Scheme is "http" or "https" && uri.Host.Length != 0)
             return TargetKind.Web;
-        if (Path.IsPathFullyQualified(target) && Path.GetExtension(target).ToLowerInvariant() is ".exe" or ".lnk" or ".url")
+        if (Path.IsPathFullyQualified(target) && !string.IsNullOrEmpty(Path.GetFileName(target)))
             return TargetKind.File;
         return TargetKind.Invalid;
+    }
+
+    public static IEnumerable<Entry> NewEntries(IEnumerable<string> inputs, IEnumerable<Entry> existing)
+    {
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var urls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in existing)
+            if (Classify(entry.Target) == TargetKind.Web) urls.Add(new Uri(entry.Target).AbsoluteUri);
+            else files.Add(entry.Target);
+        foreach (var input in inputs)
+        {
+            var target = input.Trim().Trim('"');
+            var kind = Classify(target);
+            if (kind == TargetKind.File && File.Exists(target))
+            {
+                target = Path.GetFullPath(target);
+                if (!files.Add(target)) continue;
+                var extension = Path.GetExtension(target).ToLowerInvariant();
+                var name = extension is ".exe" or ".lnk" or ".url"
+                    ? Path.GetFileNameWithoutExtension(target) : Path.GetFileName(target);
+                yield return new Entry { Name = name, Target = target };
+            }
+            else if (kind == TargetKind.Web)
+            {
+                var uri = new Uri(target);
+                if (urls.Add(uri.AbsoluteUri)) yield return new Entry { Name = uri.Host, Target = uri.AbsoluteUri };
+            }
+        }
     }
 }

@@ -44,7 +44,7 @@ internal sealed class Manager : Window
 
     private void Build()
     {
-        Ui.SetWindow(this, Words, L("Desktop Folders", "مجلدات سطح المكتب"));
+        Ui.SetWindow(this, Words, AboutWindow.AppName);
         var root = new DockPanel { Margin = new(24), LastChildFill = true };
         var header = new StackPanel { Margin = new(0, 0, 0, 16) };
         var title = Ui.Text(Title, 30);
@@ -114,6 +114,8 @@ internal sealed class Manager : Window
             app.BuildTray();
             if (WindowsServices.HasDesktopMenu()) app.TryShell(() => WindowsServices.SetDesktopMenu(true, Words));
         }));
+        preferences.Children.Add(Ui.Button(L("About", "حول التطبيق"), () =>
+            new AboutWindow(Words) { Owner = this }.ShowDialog()));
         bottom.Children.Add(preferences);
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
@@ -142,7 +144,7 @@ internal sealed class Manager : Window
     {
         var name = Ui.Prompt(this, Words, L("Folder name", "اسم المجلد"), demo ? L("Demo", "تجريبي") : "");
         if (name is null) return;
-        var folder = new Folder { Name = name, ExplorerFolder = true };
+        var folder = new Folder { Name = name };
         if (demo)
         {
             try

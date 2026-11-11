@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Security.Principal;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -39,29 +41,27 @@ public partial class App : Application
         try { ownsInstance = instance.WaitOne(0); }
         catch (AbandonedMutexException) { ownsInstance = true; }
 
-        var command = e.Args is ["--open", var id] && Guid.TryParse(id, out var key)
-            ? key.ToString("D") : e.Args.Contains("--new-folder") ? "new-folder"
-            : e.Args.Contains("--tray") ? "tray" : e.Args.Contains("--uninstall") ? "uninstall" : "manager";
         if (!ownsInstance)
         {
             try
             {
                 using var client = new NamedPipeClientStream(".", channel, PipeDirection.Out);
                 client.Connect(2500);
+                WindowsServices.ForwardForeground(client.SafePipeHandle);
                 using var writer = new StreamWriter(client);
-                writer.WriteLine(command);
+                writer.WriteLine(JsonSerializer.Serialize(e.Args));
             }
             catch (Exception error)
             {
                 WindowsServices.Log("activate-instance", error);
-                MessageBox.Show("Desktop Folders / مجلدات سطح المكتب — Could not contact the running app / تعذر الاتصال بالتطبيق");
+                MessageBox.Show(AboutWindow.AppName + " — Could not contact the running app / تعذر الاتصال بالتطبيق");
             }
             Shutdown();
             return;
         }
 
         Data = Store.Load();
-        if (command == "uninstall") { Cleanup(); return; }
+        if (e.Args is ["--uninstall"]) { Cleanup(); return; }
         _ = Task.Run(Listen);
         BuildTray();
         if (Store.Recovery is not null)
@@ -74,7 +74,15 @@ public partial class App : Application
             };
             MessageBox.Show(status);
         }
-        Dispatch(command);
+        if (!Store.ReadOnly && Store.Recovery is null)
+        {
+            foreach (var folder in Data.Folders)
+            {
+                try { WindowsServices.SyncLink(folder); }
+                catch (Exception error) { WindowsServices.Log("refresh-desktop-launcher", error); }
+            }
+        }
+        Dispatch(e.Args);
     }
 
     private async Task RunSmokeTest()
@@ -100,13 +108,24 @@ public partial class App : Application
                 throw new InvalidOperationException("Editor did not render in RTL.");
             editor.Close();
             managerView.Close();
-            var panel = new PanelWindow(folder, data, _ => { }, () => { });
+            var panel = new PanelWindow(folder, data, _ => { }, () => { },
+                import: paths => ImportEntries(folder, paths, [], () => true));
             panel.ShowNear(Forms.Cursor.Position);
+            var transfer = new DataObject();
+            transfer.SetData(DataFormats.FileDrop, new[] { Path.Combine(AppContext.BaseDirectory, "Demo.json") });
+            if (!panel.Receive(transfer) || !folder.Entries.Any(entry => entry.Name == "Demo.json") || panel.Receive(transfer))
+                throw new InvalidOperationException("The popup did not import a dropped file exactly once.");
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             if (!panel.IsVisible || !panel.FitsWorkArea()
                 || panel.Preview.Background is not System.Windows.Media.SolidColorBrush { Color.A: 0 })
                 throw new InvalidOperationException("Popup did not render within the monitor with a transparent backdrop.");
             panel.DismissImmediately();
+            var about = new AboutWindow(new Words(false));
+            about.Show();
+            await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            if (AboutWindow.DisplayVersion != "1.3" || about.ActualHeight <= 0)
+                throw new InvalidOperationException("The About window did not render version 1.3.");
+            about.Close();
             Shutdown();
         }
         catch (Exception error)
@@ -126,8 +145,11 @@ public partial class App : Application
             var folder = new Folder { Name = "Work", ExplorerFolder = true, IconColor = "#72B755" };
             folder.Entries.Add(new Entry { Name = "Notes", Target = Path.Combine(Environment.SystemDirectory, "notepad.exe"), Icon = "office:Word" });
             folder.Entries.Add(new Entry { Name = "Docs", Target = "https://example.org/" });
-            var path = ExplorerFolders.Sync(folder, desktop.FullName);
+            WindowsServices.SyncDesktop(folder, desktop.FullName);
+            var path = ExplorerFolders.Find(folder.Id, desktop.FullName)
+                ?? throw new InvalidOperationException("The desktop folder was not registered.");
             if (path == existing.FullName || !File.Exists(Path.Combine(path, "Notes.lnk"))
+                || desktop.GetFiles("*.lnk").Length != 1
                 || !File.Exists(Path.Combine(path, "Docs.url"))
                 || !File.ReadAllText(Path.Combine(path, "desktop.ini")).Contains("IconResource=")
                 || Directory.GetFiles(path, "*.ico").Length != 2
@@ -135,6 +157,10 @@ public partial class App : Application
                 throw new InvalidOperationException("Explorer folder, shortcuts, or icons were not created.");
 
             File.WriteAllText(Path.Combine(path, "Notes.lnk"), "user replacement");
+            File.WriteAllText(Path.Combine(path, "Report.txt"), "copied into the Windows folder");
+            var visible = ExplorerFolders.UserEntries(folder.Id, desktop.FullName);
+            if (!visible.Any(entry => entry.Name == "Report.txt") || visible.Any(entry => entry.Name == "Docs"))
+                throw new InvalidOperationException("The popup did not discover files copied into the Windows folder.");
             folder.Entries.RemoveAt(1);
             folder.Name = "Renamed";
             folder.IconColor = "#4998F4";
@@ -161,6 +187,7 @@ public partial class App : Application
                 directory.Attributes = FileAttributes.Directory;
                 directory.Delete();
             }
+            foreach (var file in desktop.GetFiles()) file.Delete();
             desktop.Delete();
         }
     }
@@ -200,7 +227,8 @@ public partial class App : Application
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
                 timeout.CancelAfter(2000);
                 var command = await reader.ReadLineAsync(timeout.Token);
-                if (command is not null) await Dispatcher.InvokeAsync(() => Dispatch(command));
+                if (command is { Length: <= 262144 } && JsonSerializer.Deserialize<string[]>(command) is { } arguments)
+                    await Dispatcher.InvokeAsync(() => Dispatch(arguments));
             }
             catch (OperationCanceledException) { }
             catch (Exception error)
@@ -211,17 +239,17 @@ public partial class App : Application
         }
     }
 
-    private void Dispatch(string command)
+    private void Dispatch(string[] arguments)
     {
-        if (command == "manager") ShowManager();
-        else if (command == "new-folder") CreateFromDesktop();
-        else if (command == "uninstall") Cleanup();
-        else if (Guid.TryParse(command, out var id))
+        if (arguments is ["--new-folder"]) CreateFromDesktop();
+        else if (arguments is ["--uninstall"]) Cleanup();
+        else if (arguments is ["--open", var key, ..] && Guid.TryParse(key, out var id))
         {
             var folder = Data.Folders.FirstOrDefault(item => item.Id == id);
             if (folder is null) MessageBox.Show(Words.Get("This folder no longer exists.", "لم يعد هذا المجلد موجودًا."));
-            else _ = Open(folder);
+            else _ = Open(folder, arguments.Skip(2).ToArray());
         }
+        else if (arguments is not ["--tray"]) ShowManager();
     }
 
     private void CreateFromDesktop()
@@ -232,7 +260,7 @@ public partial class App : Application
         {
             var name = Ui.Prompt(null, Words, Words.Get("New Desktop Folder", "مجلد سطح مكتب جديد"));
             if (name is null) return;
-            var folder = new Folder { Name = name, ExplorerFolder = true };
+            var folder = new Folder { Name = name };
             var viewModel = manager?.ViewModel ?? new FolderManagerViewModel(Data, Save);
             if (viewModel.Add(folder)) TryShell(() => WindowsServices.SyncDesktop(folder));
         }
@@ -261,11 +289,12 @@ public partial class App : Application
         tray?.Dispose();
         var menu = new Forms.ContextMenuStrip { RightToLeft = Data.Arabic ? Forms.RightToLeft.Yes : Forms.RightToLeft.No };
         menu.Items.Add(Words.Get("Manage folders", "إدارة المجلدات"), null, (_, _) => ShowManager());
+        menu.Items.Add(Words.Get("About", "حول التطبيق"), null, (_, _) => new AboutWindow(Words).ShowDialog());
         menu.Items.Add(Words.Get("Exit", "خروج"), null, (_, _) => Shutdown());
         tray = new Forms.NotifyIcon
         {
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!),
-            Text = Words.Get("Desktop Folders", "مجلدات سطح المكتب"),
+            Text = AboutWindow.AppName,
             ContextMenuStrip = menu,
             Visible = true
         };
@@ -284,7 +313,7 @@ public partial class App : Application
         manager.Activate();
     }
 
-    internal async Task Open(Folder folder)
+    internal async Task Open(Folder folder, string[]? dropped = null)
     {
         if (busy) return;
         busy = true;
@@ -295,7 +324,21 @@ public partial class App : Application
             if (folder.Locked && !await Authorize())
                 return;
             if (!Data.Folders.Contains(folder)) return;
-            popup = new PanelWindow(folder, Data, Launch, () => Save());
+            IReadOnlyList<Entry> external = [];
+            if (folder.ExplorerFolder && !folder.Locked)
+            {
+                try { external = ExplorerFolders.UserEntries(folder.Id, WindowsServices.Desktop); }
+                catch (Exception error) { WindowsServices.Log("read-explorer-folder", error); }
+            }
+            bool Add(string[] paths)
+            {
+                if (!Data.Folders.Contains(folder) || !ImportEntries(folder, paths, external, Save)) return false;
+                if (folder.ExplorerFolder && !folder.Locked)
+                    TryShell(() => ExplorerFolders.Sync(folder, WindowsServices.Desktop));
+                return true;
+            }
+            if (dropped is { Length: > 0 }) Add(dropped);
+            popup = new PanelWindow(folder, Data, Launch, () => Save(), import: Add, externalEntries: external);
             popup.Closed += (_, _) => popup = null;
             popup.ShowNear(anchor);
         }
@@ -305,6 +348,16 @@ public partial class App : Application
             MessageBox.Show(Words.Get("The folder panel could not open. See the local error log.", "تعذر فتح لوحة المجلد. راجع سجل الأخطاء المحلي."));
         }
         finally { busy = false; }
+    }
+
+    private static bool ImportEntries(Folder folder, string[] paths, IReadOnlyList<Entry> external, Func<bool> save)
+    {
+        var additions = Targets.NewEntries(paths, folder.Entries.Concat(external)).ToArray();
+        if (additions.Length == 0) return false;
+        foreach (var entry in additions) folder.Entries.Add(entry);
+        if (save()) return true;
+        foreach (var entry in additions) folder.Entries.Remove(entry);
+        return false;
     }
 
     internal async Task Edit(Folder folder)
