@@ -1,0 +1,32 @@
+#ifndef PublishDir
+  #define PublishDir "..\artifacts\DesktopFolders-win-x64"
+#endif
+
+[Setup]
+AppId={{ECF0B355-85BB-43AD-BA8C-00F1337DFE65}
+AppName=Desktop Folders
+AppVersion=1.0.0
+DefaultDirName={localappdata}\Programs\Desktop Folders
+PrivilegesRequired=lowest
+ArchitecturesAllowed=x64compatible and not arm64
+ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.19044
+DisableProgramGroupPage=yes
+UninstallDisplayIcon={app}\DesktopFolders.exe
+SetupIconFile=..\src\DesktopFolders\Assets\folder.ico
+OutputBaseFilename=DesktopFolders-Setup-win-x64
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+
+[Files]
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{userprograms}\Desktop Folders"; Filename: "{app}\DesktopFolders.exe"; WorkingDir: "{app}"
+
+[Run]
+Filename: "{app}\DesktopFolders.exe"; Description: "Open Desktop Folders"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\DesktopFolders.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "DesktopFoldersCleanup"

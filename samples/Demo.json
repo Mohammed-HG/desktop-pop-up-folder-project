@@ -1,0 +1,5 @@
+[
+  { "name": "Notepad", "target": "%SystemRoot%\\System32\\notepad.exe" },
+  { "name": "Calculator", "target": "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" },
+  { "name": "Microsoft Learn", "target": "https://learn.microsoft.com/windows/" }
+]
