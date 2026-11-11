@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>1.4.2</Version>
+    <Version>1.4.3</Version>
     <Product>Desktop Pop-up folder</Product>
     <Description>Desktop Pop-up folder</Description>
     <Copyright>© 2026 Mohammed-HG</Copyright>

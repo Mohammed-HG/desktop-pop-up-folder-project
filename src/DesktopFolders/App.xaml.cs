@@ -150,8 +150,8 @@ public partial class App : Application
             var about = new AboutWindow(new Words(false));
             about.Show();
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (AboutWindow.DisplayVersion != "1.4_2" || about.ActualHeight <= 0)
-                throw new InvalidOperationException("The About window did not render version 1.4_2.");
+            if (AboutWindow.DisplayVersion != "1.4_3" || about.ActualHeight <= 0)
+                throw new InvalidOperationException("The About window did not render version 1.4_3.");
             about.Close();
             Shutdown();
         }
@@ -221,6 +221,29 @@ public partial class App : Application
             if (!FolderStorage.MoveFiles(folder, [dragged], () => true, data.FullName) || File.Exists(dragged)
                 || File.ReadAllText(folder.Entries[1].Target) != "move me")
                 throw new InvalidOperationException("Dragging a file did not move it into storage.");
+            var moved = folder.Entries[1];
+            if (FolderStorage.MoveOut(folder, moved, _ => DragDropEffects.None, () => { }, data.FullName)
+                || !File.Exists(moved.Target) || !folder.Entries.Contains(moved))
+                throw new InvalidOperationException("Canceling the drag did not preserve the stored item.");
+            var saved = false;
+            DragDropEffects Drop(DataObject transfer)
+            {
+                if (transfer.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } paths)
+                    throw new InvalidOperationException("The outgoing drag did not provide a file path.");
+                var source = paths[0];
+                File.Move(source, Path.Combine(desktop.FullName, Path.GetFileName(source)));
+                return DragDropEffects.None;
+            }
+            if (!FolderStorage.MoveOut(folder, moved, Drop, () => saved = true, data.FullName)
+                || !saved || File.Exists(moved.Target) || folder.Entries.Contains(moved)
+                || File.ReadAllText(dragged) != "move me")
+                throw new InvalidOperationException("The outgoing move did not reconcile the file and entry.");
+            var reference = new Entry { Name = "External file", Target = dragged };
+            folder.Entries.Add(reference);
+            if (!FolderStorage.MoveOut(folder, reference, Drop, () => { }, data.FullName)
+                || !File.Exists(dragged) || !File.Exists(Path.Combine(desktop.FullName, "External file.lnk"))
+                || folder.Entries.Contains(reference))
+                throw new InvalidOperationException("Moving an external reference did not export the shortcut.");
         }
         finally { fixture.Delete(recursive: true); }
     }

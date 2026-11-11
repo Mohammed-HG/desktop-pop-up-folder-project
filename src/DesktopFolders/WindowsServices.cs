@@ -212,11 +212,11 @@ internal static class WindowsServices
     {
         try
         {
-            if (IconPresets.Image(entry.Icon) is { } preset) return preset;
+            if (IconPresets.Image(entry.Icon) is BitmapSource preset) return CropIcon(preset);
             if (!string.IsNullOrWhiteSpace(entry.Icon) && File.Exists(entry.Icon))
             {
                 using var stream = File.OpenRead(entry.Icon);
-                return LargestFrame(stream);
+                return CropIcon(LargestFrame(stream));
             }
             var kind = Targets.Classify(entry.Target);
             if (kind == TargetKind.File && File.Exists(entry.Target))
@@ -242,49 +242,53 @@ internal static class WindowsServices
     {
         var size = (uint)Marshal.SizeOf<ShellInfo>();
         if (SHGetFileInfo(pointer, 0, out var indexed, size, 0x4000 | flags) != 0
-            && LargeIcon(indexed.IconIndex) is { } large) return large;
+            && LargeIcon(indexed.IconIndex, trim: true) is { } large) return large;
         SHGetFileInfo(pointer, 0, out var info, size, 0x100 | flags);
-        return info.Icon == 0 ? null : ReadIcon(info.Icon);
+        return info.Icon == 0 ? null : ReadIcon(info.Icon, trim: true);
     }
 
-    private static BitmapSource? LargeIcon(int index)
+    private static BitmapSource? LargeIcon(int index, bool trim = false)
     {
         var id = typeof(IImageList).GUID;
         if (SHGetImageList(4, ref id, out var list) != 0 || list is null) return null;
-        try { return list.GetIcon(index, 1, out var icon) == 0 && icon != 0 ? ReadIcon(icon) : null; }
+        try { return list.GetIcon(index, 1, out var icon) == 0 && icon != 0 ? ReadIcon(icon, trim) : null; }
         finally { Marshal.ReleaseComObject(list); }
     }
 
-    private static BitmapSource ReadIcon(nint handle)
+    private static BitmapSource ReadIcon(nint handle, bool trim = false)
     {
         try
         {
             var icon = Imaging.CreateBitmapSourceFromHIcon(handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-            if (icon.PixelWidth < 128) return icon;
-            // Older applications can supply a 32px image inside the jumbo list's transparent 256px cell.
-            var pixels = new FormatConvertedBitmap(icon, PixelFormats.Bgra32, null, 0);
-            var stride = pixels.PixelWidth * 4;
-            var buffer = new byte[stride * pixels.PixelHeight];
-            pixels.CopyPixels(buffer, stride, 0);
-            var left = pixels.PixelWidth;
-            var top = pixels.PixelHeight;
-            var right = -1;
-            var bottom = -1;
-            for (var y = 0; y < pixels.PixelHeight; y++)
-            for (var x = 0; x < pixels.PixelWidth; x++)
-            {
-                if (buffer[y * stride + x * 4 + 3] == 0) continue;
-                left = Math.Min(left, x);
-                top = Math.Min(top, y);
-                right = Math.Max(right, x);
-                bottom = Math.Max(bottom, y);
-            }
-            if (right < left) return icon;
-            var span = Math.Max(right - left + 1, bottom - top + 1);
-            return span < icon.PixelWidth * .72
-                ? new CroppedBitmap(icon, new Int32Rect(left, top, right - left + 1, bottom - top + 1)) : icon;
+            return trim ? CropIcon(icon) : icon;
         }
         finally { DestroyIcon(handle); }
+    }
+
+    private static BitmapSource CropIcon(BitmapSource icon)
+    {
+        // Normalize the visible artwork, including small icons padded inside the jumbo list.
+        if (icon.PixelWidth > 1024 || icon.PixelHeight > 1024) return icon;
+        var pixels = new FormatConvertedBitmap(icon, PixelFormats.Bgra32, null, 0);
+        var stride = pixels.PixelWidth * 4;
+        var buffer = new byte[stride * pixels.PixelHeight];
+        pixels.CopyPixels(buffer, stride, 0);
+        var left = pixels.PixelWidth;
+        var top = pixels.PixelHeight;
+        var right = -1;
+        var bottom = -1;
+        for (var y = 0; y < pixels.PixelHeight; y++)
+        for (var x = 0; x < pixels.PixelWidth; x++)
+        {
+            if (buffer[y * stride + x * 4 + 3] == 0) continue;
+            left = Math.Min(left, x);
+            top = Math.Min(top, y);
+            right = Math.Max(right, x);
+            bottom = Math.Max(bottom, y);
+        }
+        if (right < left) return icon;
+        return left == 0 && top == 0 && right == icon.PixelWidth - 1 && bottom == icon.PixelHeight - 1
+            ? icon : new CroppedBitmap(icon, new Int32Rect(left, top, right - left + 1, bottom - top + 1));
     }
 
     [ComImport, Guid("46EB5926-582E-4017-9FDF-E8998DAA0950"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

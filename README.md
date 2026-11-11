@@ -1,6 +1,6 @@
 # Desktop Pop-up folder
 
-Desktop Pop-up folder 1.4_2 gives each folder a Windows desktop shortcut, including on redirected desktops and paths with Arabic names. Double-click to open the floating folder. Drag items in or press Ctrl+V to move them into app storage.
+Desktop Pop-up folder 1.4_3 gives each folder a Windows desktop shortcut, including on redirected desktops and paths with Arabic names. Double-click to open the floating folder. Drag items in or press Ctrl+V to move them into app storage. Drag a tile back out to move it to the desktop or File Explorer.
 
 [سجل التحديثات بالعربية](CHANGELOG.md)
 
@@ -26,7 +26,8 @@ Desktop Pop-up folder 1.4_2 gives each folder a Windows desktop shortcut, includ
 4. Double-click the desktop shortcut for the folder. You can open it with the manager closed.
 5. Drag a file or app shortcut from File Explorer or the desktop into the popup, or copy it with **Ctrl+C** and press **Ctrl+V** in the popup. Both actions move the selected item into local storage and remove it from the original location. A Windows shortcut points to its installed app, so moving that shortcut leaves the installed application where Windows installed it.
 6. Use **Folder icon color** and **Folder symbol** during creation or under **Edit → Shortcuts**. Choose a color and optionally add a screwdriver, wrench, hammer, gear, home, cloud, star, or lightning symbol. The picker previews the outline and solid styles.
-7. Use **Appearance** for layout, transparency, and **Follow Windows**. Use **Behavior** for animations and the optional **×**. Edits and settings save automatically. **OK** closes the dialog. **About** shows version 1.4_2, the copyright notice, and separate GitHub profile and source links.
+7. To move a stored item out, drag its tile to the desktop or a File Explorer folder. The tile disappears after Windows moves the file. An item added as an external reference moves out as a Windows shortcut.
+8. Use **Appearance** for layout, transparency, and **Follow Windows**. Use **Behavior** for animations and the optional **×**. Edits and settings save automatically. **OK** closes the dialog. **About** shows version 1.4_3, the copyright notice, and separate GitHub profile and source links.
 
 On startup, version 1.4_2 renames app-owned desktop shortcuts to the folder’s name and consolidates duplicates. A Windows directory with the same display name can coexist with the shortcut. An unrelated shortcut with the same filename is preserved. Use **Open stored files** in the folder’s menu to find moved items and folders migrated from earlier releases.
 

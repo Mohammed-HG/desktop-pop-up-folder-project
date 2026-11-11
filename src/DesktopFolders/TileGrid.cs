@@ -8,7 +8,8 @@ internal sealed class TileGrid(int preferredColumns, double iconSize, double spa
 {
     public int VisibleColumns { get; private set; } = 1;
     private double TileWidth => Math.Max(88, iconSize + 20);
-    private double RowHeight => iconSize + 14 + (labelSize > 0 ? Math.Ceiling(labelSize * 1.55) + 4 : 0);
+    public double LabelHeight => labelSize > 0 ? Math.Ceiling(labelSize * 2.8) : 0;
+    private double RowHeight => iconSize + 12 + LabelHeight;
 
     private (int Columns, double Width, double Gap) Layout(double availableWidth)
     {
@@ -25,7 +26,9 @@ internal sealed class TileGrid(int preferredColumns, double iconSize, double spa
         foreach (UIElement child in InternalChildren)
             child.Measure(new Size(width, RowHeight));
         var rows = (InternalChildren.Count + columns - 1) / columns;
-        return new Size(columns * width + (columns - 1) * gap, Math.Max(0, rows * (RowHeight + gap) - gap));
+        var viewportWidth = double.IsFinite(availableSize.Width)
+            ? availableSize.Width : columns * width + (columns - 1) * gap;
+        return new Size(viewportWidth, Math.Max(0, rows * (RowHeight + gap) - gap));
     }
 
     protected override Size ArrangeOverride(Size finalSize)

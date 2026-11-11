@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Windows;
 using DesktopFolders.Core;
 
 namespace DesktopFolders;
@@ -140,6 +141,59 @@ internal static class FolderStorage
                     try { File.Move(target, source); }
                     catch (Exception error) { WindowsServices.Log("restore-moved-file", error); }
                 }
+            }
+        }
+    }
+
+    public static bool MoveOut(Folder folder, Entry entry, Func<DataObject, DragDropEffects> drag, Action save,
+        string? dataDirectory = null)
+    {
+        var root = Root(folder.Id, dataDirectory) + Path.DirectorySeparatorChar;
+        var kind = Targets.Classify(entry.Target);
+        var stored = kind == TargetKind.File && Path.GetFullPath(entry.Target).StartsWith(root, StringComparison.OrdinalIgnoreCase);
+        if (kind == TargetKind.Invalid || (kind == TargetKind.File && !File.Exists(entry.Target))) return false;
+        DirectoryInfo? staging = null;
+        string? path = null;
+        try
+        {
+            if (stored) path = entry.Target;
+            else
+            {
+                staging = Directory.CreateTempSubdirectory("DesktopPopup.Drag-");
+                var extension = kind == TargetKind.File ? Path.GetExtension(entry.Target).ToLowerInvariant() : "";
+                var name = WindowsServices.SafeName(entry.Name, "Shortcut");
+                var internet = kind == TargetKind.Web || extension == ".url";
+                path = Path.Combine(staging.FullName, name + (internet ? ".url" : ".lnk"));
+                if (kind == TargetKind.Web)
+                    File.WriteAllText(path, $"[InternetShortcut]\r\nURL={new Uri(entry.Target).AbsoluteUri}\r\n");
+                else if (extension is ".lnk" or ".url")
+                {
+                    File.Copy(entry.Target, path);
+                    File.SetAttributes(path, FileAttributes.Normal);
+                }
+                else
+                {
+                    var target = kind == TargetKind.AppsFolder
+                        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe") : entry.Target;
+                    ShellShortcut.Save(path, target, kind == TargetKind.AppsFolder ? $"\"{entry.Target}\"" : "",
+                        workingDirectory: Path.GetDirectoryName(target));
+                }
+            }
+            var data = new DataObject(DataFormats.FileDrop, new[] { path });
+            using var preferred = new MemoryStream(BitConverter.GetBytes((int)DragDropEffects.Move));
+            data.SetData("Preferred DropEffect", preferred, autoConvert: false);
+            drag(data);
+            // Explorer's optimized move can report None even after moving the file.
+            if (File.Exists(path)) return false;
+            if (folder.Entries.Remove(entry)) save();
+            return true;
+        }
+        finally
+        {
+            if (staging is not null)
+            {
+                if (path is not null) File.Delete(path);
+                staging.Delete();
             }
         }
     }

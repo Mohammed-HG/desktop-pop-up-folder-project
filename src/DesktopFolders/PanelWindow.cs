@@ -36,6 +36,7 @@ internal sealed class PanelWindow : Window
     private Drawing.Rectangle work;
     private double pixelsPerDip = 1;
     private bool closing;
+    private bool draggingOut;
     private bool positioned;
 
     public Border Preview => surface;
@@ -76,17 +77,17 @@ internal sealed class PanelWindow : Window
             AllowDrop = move is not null;
             PreviewDragOver += (_, e) =>
             {
-                e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) && e.AllowedEffects.HasFlag(DragDropEffects.Move)
+                e.Effects = !draggingOut && e.Data.GetDataPresent(DataFormats.FileDrop) && e.AllowedEffects.HasFlag(DragDropEffects.Move)
                     ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
             };
             PreviewDrop += (_, e) =>
             {
-                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && Receive(e.Data)
+                e.Effects = !draggingOut && e.AllowedEffects.HasFlag(DragDropEffects.Move) && Receive(e.Data)
                     ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
             };
-            Deactivated += (_, _) => { if (positioned && settings.OutsideClose) Dismiss(); };
+            Deactivated += (_, _) => { if (positioned && settings.OutsideClose && !draggingOut) Dismiss(); };
             PreviewKeyDown += OnKey;
             Closed += (_, _) => inactivity?.Stop();
             if (folder.Locked && settings.LockMinutes > 0)
@@ -205,7 +206,7 @@ internal sealed class PanelWindow : Window
             tiles.Add(button);
             grid.Children.Add(button);
         }
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Visible,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = grid };
         if (tiles.Count == 0)
@@ -228,27 +229,34 @@ internal sealed class PanelWindow : Window
             icon = (entry.Icon, entry.Target, WindowsServices.EntryIcon(entry));
             icons[entry] = icon;
         }
-        var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = true };
+        var body = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = true };
+        body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(settings.IconSize) });
         var image = new Image
         {
             Source = icon.Image, Width = settings.IconSize, Height = settings.IconSize,
-            Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center
+            Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, FlowDirection = FlowDirection.LeftToRight
         };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         body.Children.Add(image);
         if (settings.Labels)
         {
+            body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(iconGrid!.LabelHeight) });
             var text = new TextBlock
             {
                 Text = entry.Name, Foreground = foreground, TextTrimming = TextTrimming.CharacterEllipsis,
-                FontSize = settings.FontSize, TextAlignment = TextAlignment.Center, Padding = new(3, 1, 3, 1)
+                FontSize = settings.FontSize, TextAlignment = TextAlignment.Center, Padding = new(3, 0, 3, 0),
+                TextWrapping = TextWrapping.Wrap
             };
-            body.Children.Add(new Border { Child = text, Background = labelFill, CornerRadius = new(5), Margin = new(0, 4, 0, 0) });
+            var label = new Border { Child = text, Background = labelFill, CornerRadius = new(5), Margin = new(0, 3, 0, 0),
+                ClipToBounds = true };
+            Grid.SetRow(label, 1);
+            body.Children.Add(label);
         }
         var button = new Button
         {
             Content = body,
-            ToolTip = entry.Name, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            ToolTip = preview ? entry.Name : entry.Name + "\n" + L("Drag to move out", "اسحب لنقله خارج المجلد"),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Cursor = Cursors.Hand, Focusable = !preview
         };
         System.Windows.Automation.AutomationProperties.SetName(button, entry.Name);
@@ -271,6 +279,20 @@ internal sealed class PanelWindow : Window
         {
             button.Click += (_, _) => launch(entry);
             button.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; launch(entry); } };
+            Point? start = null;
+            button.PreviewMouseLeftButtonDown += (_, e) => start = e.GetPosition(this);
+            button.PreviewMouseLeftButtonUp += (_, _) => start = null;
+            button.PreviewMouseMove += (_, e) =>
+            {
+                if (draggingOut || start is not { } origin || e.LeftButton != MouseButtonState.Pressed) return;
+                var distance = e.GetPosition(this) - origin;
+                if (Math.Abs(distance.X) < SystemParameters.MinimumHorizontalDragDistance
+                    && Math.Abs(distance.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+                start = null;
+                e.Handled = true;
+                button.ReleaseMouseCapture();
+                DragOut(button, entry);
+            };
         }
         if (animations && settings.Hover && settings.Duration > 0 && !preview)
         {
@@ -281,6 +303,27 @@ internal sealed class PanelWindow : Window
             button.MouseLeave += (_, _) => Zoom(transform, 1, Math.Min(140, settings.Duration));
         }
         return button;
+    }
+
+    private void DragOut(Button button, Entry entry)
+    {
+        draggingOut = true;
+        inactivity?.Stop();
+        try
+        {
+            if (FolderStorage.MoveOut(folder, entry, data => DragDrop.DoDragDrop(button, data, DragDropEffects.Move), save))
+                Refresh();
+        }
+        catch (Exception error)
+        {
+            WindowsServices.Log("move-out", error);
+            MessageBox.Show(this, L("Windows could not move this item.", "تعذر على ويندوز نقل هذا العنصر."));
+        }
+        finally
+        {
+            draggingOut = false;
+            if (IsVisible) ResetTimer();
+        }
     }
 
     private static double Linear(byte channel)
