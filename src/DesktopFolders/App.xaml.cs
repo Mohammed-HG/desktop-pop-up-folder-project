@@ -109,6 +109,9 @@ public partial class App : Application
             CheckShortcutLifecycle();
             if (checkDesktop) CheckRedirectedDesktop();
             CheckFolderStorage();
+            CheckTileGrid();
+            if (WindowsServices.FolderIcon is not System.Windows.Media.Imaging.BitmapSource { PixelWidth: 256 })
+                throw new InvalidOperationException("The application icon did not expose its high-resolution frame.");
             var data = new Preferences { Arabic = true };
             var managerView = new Manager(this);
             managerView.Show();
@@ -124,23 +127,31 @@ public partial class App : Application
                 throw new InvalidOperationException("Editor did not render in RTL.");
             editor.Close();
             managerView.Close();
-            var panel = new PanelWindow(folder, data, _ => { }, () => { },
-                import: paths => ImportEntries(folder, paths, [], () => true));
-            panel.ShowNear(Forms.Cursor.Position);
-            var transfer = new DataObject();
-            transfer.SetData(DataFormats.FileDrop, new[] { Path.Combine(AppContext.BaseDirectory, "Demo.json") });
-            if (!panel.Receive(transfer) || !folder.Entries.Any(entry => entry.Name == "Demo.json") || panel.Receive(transfer))
-                throw new InvalidOperationException("The popup did not import a dropped file exactly once.");
-            await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (!panel.IsVisible || !panel.FitsWorkArea()
-                || panel.Preview.Background is not System.Windows.Media.SolidColorBrush { Color.A: 0 })
-                throw new InvalidOperationException("Popup did not render within the monitor with a transparent backdrop.");
-            panel.DismissImmediately();
+            var fixture = Directory.CreateTempSubdirectory("DesktopFolders.TransferSmoke-");
+            try
+            {
+                var source = Path.Combine(fixture.FullName, "Move me.txt");
+                File.WriteAllText(source, "transfer");
+                var panel = new PanelWindow(folder, data, _ => { }, () => { },
+                    move: paths => FolderStorage.MoveFiles(folder, paths, () => true, fixture.FullName));
+                panel.ShowNear(Forms.Cursor.Position);
+                var transfer = new DataObject();
+                transfer.SetData(DataFormats.FileDrop, new[] { source });
+                if (!panel.Receive(transfer) || File.Exists(source) || panel.Receive(transfer)
+                    || File.ReadAllText(folder.Entries.Single(entry => entry.Name == "Move me.txt").Target) != "transfer")
+                    throw new InvalidOperationException("The popup did not move clipboard file data exactly once.");
+                await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                if (!panel.IsVisible || !panel.FitsWorkArea()
+                    || panel.Preview.Background is not System.Windows.Media.SolidColorBrush { Color.A: 0 })
+                    throw new InvalidOperationException("Popup did not render within the monitor with a transparent backdrop.");
+                panel.DismissImmediately();
+            }
+            finally { fixture.Delete(recursive: true); }
             var about = new AboutWindow(new Words(false));
             about.Show();
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (AboutWindow.DisplayVersion != "1.4_1" || about.ActualHeight <= 0)
-                throw new InvalidOperationException("The About window did not render version 1.4_1.");
+            if (AboutWindow.DisplayVersion != "1.4_2" || about.ActualHeight <= 0)
+                throw new InvalidOperationException("The About window did not render version 1.4_2.");
             about.Close();
             Shutdown();
         }
@@ -148,6 +159,23 @@ public partial class App : Application
         {
             Console.Error.WriteLine(error);
             Shutdown(1);
+        }
+    }
+
+    private static void CheckTileGrid()
+    {
+        var grid = new TileGrid(4, 48, 8, 13);
+        for (var i = 0; i < 7; i++) grid.Children.Add(new System.Windows.Controls.Button { Content = i });
+        foreach (var (width, columns) in new[] { (220d, 2), (700d, 4) })
+        {
+            grid.Measure(new Size(width, 500));
+            grid.Arrange(new Rect(0, 0, width, 500));
+            var first = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(
+                (FrameworkElement)grid.Children[0]);
+            var nextRow = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(
+                (FrameworkElement)grid.Children[columns]);
+            if (grid.VisibleColumns != columns || first.X != nextRow.X || first.Size != nextRow.Size || first.Y >= nextRow.Y)
+                throw new InvalidOperationException("Folder tiles did not align on resize.");
         }
     }
 
@@ -212,11 +240,23 @@ public partial class App : Application
             ShellShortcut.Save(duplicate, Environment.ProcessPath!, arguments, AboutWindow.AppName);
             ShellShortcut.Save(unmanaged, Environment.ProcessPath!, "--tray", AboutWindow.AppName);
             folder.IconColor = "#7052A4";
+            folder.Mark = FolderMark.Gear;
             WindowsServices.SyncLink(folder, directory.FullName);
             var initial = directory.GetFiles("*.lnk").Single(file => file.FullName != unmanaged);
+            using var icon = new MemoryStream(FolderArtwork.Ico(folder));
+            var frames = System.Windows.Media.Imaging.BitmapDecoder.Create(icon,
+                System.Windows.Media.Imaging.BitmapCreateOptions.None, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames;
             if (initial.FullName != duplicate || File.Exists(old)
-                || IconPresets.Icon("", folder.IconColor) is not { Length: > 22 })
+                || frames.Count != 8 || !frames.Any(frame => frame.PixelWidth == 256))
                 throw new InvalidOperationException("Duplicate shortcuts or the Windows folder tint were not handled.");
+            foreach (var mark in Enum.GetValues<FolderMark>())
+            foreach (var style in Enum.GetValues<MarkStyle>())
+            {
+                folder.Mark = mark;
+                folder.MarkStyle = style;
+                if (FolderArtwork.Preview(folder).PixelWidth != 128)
+                    throw new InvalidOperationException("A folder symbol did not render.");
+            }
             folder.Name = "ألعاب جديدة";
             WindowsServices.SyncLink(folder, directory.FullName);
             var renamed = directory.GetFiles("*.lnk").Single(file => file.FullName != unmanaged);
@@ -347,7 +387,6 @@ public partial class App : Application
                 try { external = FolderStorage.UserEntries(folder.Id); }
                 catch (Exception error) { WindowsServices.Log("read-folder-storage", error); }
             }
-            bool Add(string[] paths) => Data.Folders.Contains(folder) && ImportEntries(folder, paths, external, Save);
             bool Move(string[] paths)
             {
                 if (!Data.Folders.Contains(folder)) return false;
@@ -360,7 +399,7 @@ public partial class App : Application
                 }
             }
             if (dropped is { Length: > 0 }) Move(dropped);
-            popup = new PanelWindow(folder, Data, Launch, () => Save(), import: Add, externalEntries: external, move: Move);
+            popup = new PanelWindow(folder, Data, Launch, () => Save(), externalEntries: external, move: Move);
             popup.Closed += (_, _) => popup = null;
             popup.ShowNear(anchor);
         }
@@ -370,16 +409,6 @@ public partial class App : Application
             MessageBox.Show(Words.Get("The folder panel could not open. See the local error log.", "تعذر فتح لوحة المجلد. راجع سجل الأخطاء المحلي."));
         }
         finally { busy = false; }
-    }
-
-    private static bool ImportEntries(Folder folder, string[] paths, IReadOnlyList<Entry> external, Func<bool> save)
-    {
-        var additions = Targets.NewEntries(paths, folder.Entries.Concat(external)).ToArray();
-        if (additions.Length == 0) return false;
-        foreach (var entry in additions) folder.Entries.Add(entry);
-        if (save()) return true;
-        foreach (var entry in additions) folder.Entries.Remove(entry);
-        return false;
     }
 
     internal async Task Edit(Folder folder)
@@ -397,7 +426,8 @@ public partial class App : Application
             {
                 var updated = Store.Clone(draft);
                 if (!owner.ViewModel.Apply(current, updated)) return false;
-                var updateShortcut = updated.Name != current.Name || updated.IconColor != current.IconColor;
+                var updateShortcut = updated.Name != current.Name || updated.IconColor != current.IconColor
+                    || updated.Mark != current.Mark || updated.MarkStyle != current.MarkStyle;
                 current = updated;
                 if (updateShortcut) TryShell(() => WindowsServices.SyncLink(updated));
                 return true;

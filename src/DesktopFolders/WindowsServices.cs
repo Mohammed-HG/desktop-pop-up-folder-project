@@ -13,7 +13,6 @@ using DesktopFolders.Core;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using Windows.Security.Credentials.UI;
-using Drawing = System.Drawing;
 
 namespace DesktopFolders;
 
@@ -105,11 +104,10 @@ internal static class WindowsServices
     {
         var safe = SafeName(folder.Name, "Folder");
         var destination = directory ?? Desktop;
-        if (Directory.Exists(Path.Combine(destination, safe))) safe += " (Pop-up)";
         var existing = FindLinks(folder.Id, destination).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var path = Path.Combine(destination, safe + ".lnk");
-        for (var n = 2; Directory.Exists(path) || (File.Exists(path) && !existing.Contains(path)); n++)
-            path = Path.Combine(destination, $"{safe} ({n}).lnk");
+        if (Directory.Exists(path) || (File.Exists(path) && !existing.Contains(path)))
+            throw new IOException("An unrelated desktop item is already using this shortcut filename.");
         if (!File.Exists(path) && existing.FirstOrDefault() is { } previous)
         {
             File.Move(previous, path);
@@ -123,18 +121,16 @@ internal static class WindowsServices
             iconPath = stock.Path;
             iconIndex = stock.Index;
         }
-        if (!string.IsNullOrWhiteSpace(folder.IconColor))
+        if (FolderArtwork.HasCustomArt(folder))
         {
             try
             {
-                if (IconPresets.Icon("", folder.IconColor) is { } bytes)
-                {
-                    var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..12];
-                    var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}-{hash}.ico");
-                    if (!File.Exists(icon)) File.WriteAllBytes(icon, bytes);
-                    iconPath = icon;
-                    iconIndex = 0;
-                }
+                var bytes = FolderArtwork.Ico(folder);
+                var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..12];
+                var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}-{hash}.ico");
+                if (!File.Exists(icon)) File.WriteAllBytes(icon, bytes);
+                iconPath = icon;
+                iconIndex = 0;
             }
             catch (Exception error) { Log("desktop-icon", error); }
         }
@@ -189,23 +185,28 @@ internal static class WindowsServices
     }
 
     private static ImageSource? folderIcon;
-    public static ImageSource WindowsFolderImage
+    private static BitmapSource? windowsFolderImage;
+    public static BitmapSource WindowsFolderImage => windowsFolderImage ??= StockImage(3) ?? (BitmapSource)FolderIcon;
+
+    private static BitmapSource? StockImage(uint id)
     {
-        get
-        {
-            var stock = new StockIcon { Size = (uint)Marshal.SizeOf<StockIcon>() };
-            if (SHGetStockIconInfo(3, 0x100, ref stock) != 0 || stock.Handle == 0) return FolderIcon;
-            try { return Imaging.CreateBitmapSourceFromHIcon(stock.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions()); }
-            finally { DestroyIcon(stock.Handle); }
-        }
+        var stock = new StockIcon { Size = (uint)Marshal.SizeOf<StockIcon>() };
+        if (SHGetStockIconInfo(id, 0x4000, ref stock) == 0 && LargeIcon(stock.ImageIndex) is { } large)
+            return large;
+        if (SHGetStockIconInfo(id, 0x100, ref stock) != 0 || stock.Handle == 0) return null;
+        return ReadIcon(stock.Handle);
     }
     public static ImageSource FolderIcon => folderIcon ??= LoadFolderIcon();
 
     private static ImageSource LoadFolderIcon()
     {
         using var stream = Application.GetResourceStream(new Uri("Assets/folder.ico", UriKind.Relative)).Stream;
-        return BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        return LargestFrame(stream);
     }
+
+    private static BitmapFrame LargestFrame(Stream stream) => BitmapDecoder.Create(stream,
+        BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames
+        .MaxBy(frame => (long)frame.PixelWidth * frame.PixelHeight)!;
 
     public static ImageSource EntryIcon(Entry entry)
     {
@@ -215,7 +216,7 @@ internal static class WindowsServices
             if (!string.IsNullOrWhiteSpace(entry.Icon) && File.Exists(entry.Icon))
             {
                 using var stream = File.OpenRead(entry.Icon);
-                return BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+                return LargestFrame(stream);
             }
             var kind = Targets.Classify(entry.Target);
             if (kind == TargetKind.File && File.Exists(entry.Target))
@@ -234,15 +235,69 @@ internal static class WindowsServices
         return DefaultEntryIcon;
     }
 
-    private static ImageSource DefaultEntryIcon => Imaging.CreateBitmapSourceFromHIcon(
-        Drawing.SystemIcons.Application.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+    private static ImageSource? defaultEntryIcon;
+    private static ImageSource DefaultEntryIcon => defaultEntryIcon ??= (ImageSource?)StockImage(2) ?? FolderIcon;
 
     private static ImageSource? ShellIcon(nint pointer, uint flags)
     {
-        SHGetFileInfo(pointer, 0, out var info, (uint)Marshal.SizeOf<ShellInfo>(), 0x100 | flags);
-        if (info.Icon == 0) return null;
-        try { return Imaging.CreateBitmapSourceFromHIcon(info.Icon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions()); }
-        finally { DestroyIcon(info.Icon); }
+        var size = (uint)Marshal.SizeOf<ShellInfo>();
+        if (SHGetFileInfo(pointer, 0, out var indexed, size, 0x4000 | flags) != 0
+            && LargeIcon(indexed.IconIndex) is { } large) return large;
+        SHGetFileInfo(pointer, 0, out var info, size, 0x100 | flags);
+        return info.Icon == 0 ? null : ReadIcon(info.Icon);
+    }
+
+    private static BitmapSource? LargeIcon(int index)
+    {
+        var id = typeof(IImageList).GUID;
+        if (SHGetImageList(4, ref id, out var list) != 0 || list is null) return null;
+        try { return list.GetIcon(index, 1, out var icon) == 0 && icon != 0 ? ReadIcon(icon) : null; }
+        finally { Marshal.ReleaseComObject(list); }
+    }
+
+    private static BitmapSource ReadIcon(nint handle)
+    {
+        try
+        {
+            var icon = Imaging.CreateBitmapSourceFromHIcon(handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            if (icon.PixelWidth < 128) return icon;
+            // Older applications can supply a 32px image inside the jumbo list's transparent 256px cell.
+            var pixels = new FormatConvertedBitmap(icon, PixelFormats.Bgra32, null, 0);
+            var stride = pixels.PixelWidth * 4;
+            var buffer = new byte[stride * pixels.PixelHeight];
+            pixels.CopyPixels(buffer, stride, 0);
+            var left = pixels.PixelWidth;
+            var top = pixels.PixelHeight;
+            var right = -1;
+            var bottom = -1;
+            for (var y = 0; y < pixels.PixelHeight; y++)
+            for (var x = 0; x < pixels.PixelWidth; x++)
+            {
+                if (buffer[y * stride + x * 4 + 3] == 0) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+            }
+            if (right < left) return icon;
+            var span = Math.Max(right - left + 1, bottom - top + 1);
+            return span < icon.PixelWidth * .72
+                ? new CroppedBitmap(icon, new Int32Rect(left, top, right - left + 1, bottom - top + 1)) : icon;
+        }
+        finally { DestroyIcon(handle); }
+    }
+
+    [ComImport, Guid("46EB5926-582E-4017-9FDF-E8998DAA0950"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IImageList
+    {
+        void Add(nint image, nint mask, out int index);
+        void ReplaceIcon(int index, nint icon, out int replacement);
+        void SetOverlayImage(int image, int overlay);
+        void Replace(int index, nint image, nint mask);
+        void AddMasked(nint image, uint mask, out int index);
+        void Draw(nint parameters);
+        void Remove(int index);
+        [PreserveSig] int GetIcon(int index, uint flags, out nint icon);
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -257,6 +312,7 @@ internal static class WindowsServices
 
     [DllImport("shell32.dll", EntryPoint = "SHGetFileInfoW")]
     private static extern nint SHGetFileInfo(nint path, uint attributes, out ShellInfo info, uint size, uint flags);
+    [DllImport("shell32.dll")] private static extern int SHGetImageList(int size, ref Guid id, out IImageList? list);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(string name, nint context, out nint pidl, uint mask, out uint attributes);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);

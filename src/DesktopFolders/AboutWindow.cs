@@ -12,7 +12,7 @@ internal sealed class AboutWindow : Window
 {
     public const string AppName = "Desktop Pop-up folder";
     public const string ProfileUrl = "https://github.com/Mohammed-HG";
-    public const string SourceUrl = ProfileUrl + "/Win-desktop-modern-folder";
+    public const string SourceUrl = ProfileUrl + "/win-desktop-pop-up-folder-project";
     public static string DisplayVersion
     {
         get

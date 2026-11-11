@@ -4,6 +4,8 @@ namespace DesktopFolders.Core;
 
 public enum Backdrop { Light, Dark, Custom, Translucent, Windows }
 public enum AppAppearance { Windows, Light, Dark }
+public enum FolderMark { None, Screwdriver, Wrench, Hammer, Gear, Home, Cloud, Star, Bolt }
+public enum MarkStyle { Outline, Solid }
 public enum AnimationChoice { Default, On, Off }
 
 public sealed class Preferences
@@ -21,6 +23,8 @@ public sealed class Folder
     public string Name { get; set; } = "Folder";
     public string Icon { get; set; } = "";
     public string IconColor { get; set; } = "";
+    public FolderMark Mark { get; set; }
+    public MarkStyle MarkStyle { get; set; }
     public bool ExplorerFolder { get; set; }
     public bool Locked { get; set; }
     public ObservableCollection<Entry> Entries { get; set; } = [];

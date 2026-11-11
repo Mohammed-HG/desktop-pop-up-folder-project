@@ -124,9 +124,17 @@ internal sealed class Editor : Window
         Row(body, L("Folder name", "اسم المجلد"), name);
         var icons = new WrapPanel();
         icons.Children.Add(Ui.Button(Glyph.Color, L("Folder icon color", "لون أيقونة المجلد"), () =>
-            IconPresets.PickColor(this, words, Draft.IconColor, color =>
+            IconPresets.PickColor(this, words, Draft, color =>
             {
                 Draft.IconColor = color;
+                UpdatePreview();
+                Flush();
+            })));
+        icons.Children.Add(Ui.Button("\uE734", L("Folder symbol", "رمز المجلد"), () =>
+            FolderArtwork.PickMark(this, words, Draft, (mark, style) =>
+            {
+                Draft.Mark = mark;
+                Draft.MarkStyle = style;
                 UpdatePreview();
                 Flush();
             })));

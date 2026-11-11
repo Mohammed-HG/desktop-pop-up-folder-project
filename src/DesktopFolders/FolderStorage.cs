@@ -97,14 +97,19 @@ internal static class FolderStorage
         {
             foreach (var source in paths.Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                if (Targets.Classify(source) != TargetKind.File || !File.Exists(source)) continue;
+                if (Targets.Classify(source) != TargetKind.File || !File.Exists(source)) return false;
                 var file = new FileInfo(source);
                 if (file.LinkTarget is not null || file.DirectoryName is null
-                    || string.Equals(file.DirectoryName, destination, StringComparison.OrdinalIgnoreCase)) continue;
-                if (ShellShortcut.IsFolderLauncher(file.FullName)) continue;
+                    || string.Equals(file.DirectoryName, destination, StringComparison.OrdinalIgnoreCase)) return false;
+                if (ShellShortcut.IsFolderLauncher(file.FullName)) return false;
                 Directory.CreateDirectory(destination);
                 var target = UniquePath(destination, file.Name);
                 File.Move(file.FullName, target);
+                if (File.Exists(file.FullName))
+                {
+                    File.Delete(target);
+                    throw new IOException("Windows copied the file but could not remove it from its original location.");
+                }
                 moves.Add((file.FullName, target));
                 var matching = folder.Entries.Where(entry => string.Equals(entry.Target, file.FullName, StringComparison.OrdinalIgnoreCase)).ToArray();
                 foreach (var entry in matching)

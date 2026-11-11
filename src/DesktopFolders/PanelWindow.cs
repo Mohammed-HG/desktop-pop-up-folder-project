@@ -25,8 +25,8 @@ internal sealed class PanelWindow : Window
     private readonly bool preview;
     private readonly Words words;
     private readonly bool animations;
-    private readonly Func<string[], bool>? import;
     private readonly Func<string[], bool>? move;
+    private TileGrid? iconGrid;
     private readonly IReadOnlyList<Entry> externalEntries;
     private readonly Border surface = new();
     private readonly ScaleTransform scale = new(1, 1);
@@ -42,7 +42,7 @@ internal sealed class PanelWindow : Window
     private string L(string en, string ar) => words.Get(en, ar);
 
     public PanelWindow(Folder folder, Preferences preferences, Action<Entry> launch, Action save, bool preview = false,
-        Func<string[], bool>? import = null, IReadOnlyList<Entry>? externalEntries = null,
+        IReadOnlyList<Entry>? externalEntries = null,
         Func<string[], bool>? move = null)
     {
         this.folder = folder;
@@ -50,7 +50,6 @@ internal sealed class PanelWindow : Window
         this.launch = launch;
         this.save = save;
         this.preview = preview;
-        this.import = import;
         this.move = move;
         this.externalEntries = externalEntries ?? [];
         words = new(preferences.Arabic);
@@ -83,7 +82,7 @@ internal sealed class PanelWindow : Window
             };
             PreviewDrop += (_, e) =>
             {
-                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && Receive(e.Data, moving: true)
+                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && Receive(e.Data)
                     ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
             };
@@ -193,21 +192,26 @@ internal sealed class PanelWindow : Window
             content.Children.Add(resize);
         }
 
-        var grid = new UniformGrid { Columns = settings.Columns, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new(0, 0, 2, 0) };
+        var grid = new TileGrid(settings.Columns, settings.IconSize, settings.Spacing, settings.Labels ? settings.FontSize : 0)
+        {
+            VerticalAlignment = VerticalAlignment.Top, UseLayoutRounding = true, ClipToBounds = true
+        };
+        iconGrid = grid;
         var configured = folder.Entries.Select(entry => entry.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in folder.Entries.Concat(externalEntries.Where(entry => !configured.Contains(entry.Target))))
+        foreach (var entry in folder.Entries.Concat(externalEntries.Where(entry => !configured.Contains(entry.Target)
+            && System.IO.File.Exists(entry.Target))))
         {
             var button = Tile(entry, foreground, labelFill);
             tiles.Add(button);
             grid.Children.Add(button);
         }
         var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = grid };
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = grid };
         if (tiles.Count == 0)
         {
-            var empty = Ui.Text(L("Drag a file here to move it, or press Ctrl+V to add a link.",
-                "اسحب ملفًا إلى هنا لنقله، أو اضغط Ctrl+V لإضافة اختصار."));
+            var empty = Ui.Text(L("Drag a file here or press Ctrl+V to move it into this folder.",
+                "اسحب ملفًا إلى هنا أو اضغط Ctrl+V لنقله إلى هذا المجلد."));
             empty.Padding = new(8);
             empty.Foreground = foreground;
             content.Children.Add(new Border { Background = labelFill, CornerRadius = new(8),
@@ -224,12 +228,13 @@ internal sealed class PanelWindow : Window
             icon = (entry.Icon, entry.Target, WindowsServices.EntryIcon(entry));
             icons[entry] = icon;
         }
-        var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var body = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch, ClipToBounds = true };
         var image = new Image
         {
-            Source = icon.Image, MaxWidth = settings.IconSize, Height = settings.IconSize,
+            Source = icon.Image, Width = settings.IconSize, Height = settings.IconSize,
             Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center
         };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         body.Children.Add(image);
         if (settings.Labels)
         {
@@ -242,7 +247,7 @@ internal sealed class PanelWindow : Window
         }
         var button = new Button
         {
-            Content = body, Margin = new(settings.Spacing / 2),
+            Content = body,
             ToolTip = entry.Name, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Cursor = Cursors.Hand, Focusable = !preview
         };
@@ -287,17 +292,18 @@ internal sealed class PanelWindow : Window
     private void OnKey(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape) { e.Handled = true; Dismiss(); return; }
-        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && import is not null)
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && move is not null)
         {
             e.Handled = true;
             Paste();
             return;
         }
         var direction = words.Direction == FlowDirection.RightToLeft ? -1 : 1;
+        var columns = iconGrid?.VisibleColumns ?? settings.Columns;
         var offset = e.Key switch
         {
-            Key.Left => -direction, Key.Right => direction, Key.Up => -settings.Columns,
-            Key.Down => settings.Columns, _ => 0
+            Key.Left => -direction, Key.Right => direction, Key.Up => -columns,
+            Key.Down => columns, _ => 0
         };
         if (offset == 0 || tiles.Count == 0) return;
         var index = Keyboard.FocusedElement is Button focused ? tiles.IndexOf(focused) : -1;
@@ -314,14 +320,11 @@ internal sealed class PanelWindow : Window
         catch (ExternalException error) { WindowsServices.Log("paste-clipboard", error); }
     }
 
-    internal bool Receive(IDataObject data, bool moving = false)
+    internal bool Receive(IDataObject data)
     {
-        var transfer = moving ? move : import;
-        if (transfer is null || closing) return false;
+        if (move is null || closing) return false;
         var paths = data.GetData(DataFormats.FileDrop) as string[];
-        if (!moving && paths is null && data.GetData(DataFormats.UnicodeText) is string text)
-            paths = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        if (paths is null || !transfer(paths)) return false;
+        if (paths is null || !move(paths)) return false;
         ResetTimer();
         Refresh();
         if (tiles.Count != 0) tiles[^1].Focus();

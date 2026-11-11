@@ -26,7 +26,9 @@ internal static class NewFolderDialog
         var folder = new Folder();
         var colorRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new(0, 0, 0, 10) };
         colorRow.Children.Add(Ui.Button(Glyph.Color, L("Folder icon color", "لون أيقونة المجلد"), () =>
-            IconPresets.PickColor(dialog, words, folder.IconColor, selected => folder.IconColor = selected)));
+            IconPresets.PickColor(dialog, words, folder, selected => folder.IconColor = selected)));
+        colorRow.Children.Add(Ui.Button("\uE734", L("Folder symbol", "رمز المجلد"), () =>
+            FolderArtwork.PickMark(dialog, words, folder, (mark, style) => { folder.Mark = mark; folder.MarkStyle = style; })));
         body.Children.Add(colorRow);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var create = Ui.Ok(() =>

@@ -1,6 +1,6 @@
 # Desktop Pop-up folder
 
-Desktop Pop-up folder 1.4_1 gives each folder a Windows desktop shortcut, including on redirected desktops and paths with Arabic names. Double-click to open the floating folder. Drag items in to move them, or use Ctrl+V to add links.
+Desktop Pop-up folder 1.4_2 gives each folder a Windows desktop shortcut, including on redirected desktops and paths with Arabic names. Double-click to open the floating folder. Drag items in or press Ctrl+V to move them into app storage.
 
 [سجل التحديثات بالعربية](CHANGELOG.md)
 
@@ -9,10 +9,10 @@ Desktop Pop-up folder 1.4_1 gives each folder a Windows desktop shortcut, includ
 | Area | Details |
 | --- | --- |
 | Platform | Windows 10 build 19044 or later and Windows 11 on x64. Built in C# with .NET 10 and WPF. The self-contained package includes the .NET Desktop Runtime. |
-| Folder management | Create popup folders from the desktop context menu or manager. Each gets one desktop shortcut. Rename, duplicate, reorder, and repair folders. Choose the Windows folder icon or tint the same shape with a custom color. |
-| Shortcuts | Drop app shortcuts or files into the popup to move them into app storage. Use Ctrl+V to add a reference to the original. The manager also supports installed AppsFolder entries, web addresses, and individual app icons. |
+| Folder management | Create popup folders from the desktop context menu or manager. Each gets one desktop shortcut using the folder name. Choose the Windows folder icon, tint it, or add a transparent symbol in outline or solid style. |
+| Shortcuts | Drag or paste app shortcuts and files into the popup to move them into local storage. The manager also supports adding references to installed AppsFolder entries, web addresses, and files. |
 | Panel | Opens at the pointer or at its saved position. The window fits within the selected monitor’s work area and uses per-monitor DPI awareness. Set width from 240 to 1200 and height from 160 to 1000 device-independent pixels, subject to the monitor’s available space. Drag the panel title to move it and the corner grip to resize it. |
-| Layout and appearance | Choose 1–10 columns, icon size, spacing, padding, labels, and corner radius. Set the app to light, dark, or follow Windows, with the Windows accent color on controls. Each popup can follow the Windows background and text colors or use its own appearance and transparency. |
+| Layout and appearance | Set up to 10 columns. Equal tiles wrap as the popup gets narrower, with aligned labels and rows. Windows supplies larger icon sources when available. Set the app and popup to light, dark, or follow Windows, or customize the popup background and transparency. |
 | Motion and dismissal | Choose animations when creating or editing a folder. Windows reduced-motion preferences take precedence. Show or hide the corner **×** per folder. Press Esc to close at any time. Locked panels close immediately. |
 | Lock | Popup folders support optional Windows Hello verification on Windows 11. Windows presents the configured PIN or biometric options. |
 | Language and input | English and Arabic with right-to-left layout. Navigate with Tab or arrow keys, press Enter to launch, and press Esc to close. Outside-click dismissal is configurable. |
@@ -24,11 +24,11 @@ Desktop Pop-up folder 1.4_1 gives each folder a Windows desktop shortcut, includ
 2. For a portable install, extract the complete `DesktopFolders-win-x64.zip` to a permanent directory and run `DesktopFolders.exe` inside it. The runtime and `Demo.json` travel with the executable.
 3. Right-click a blank area of the desktop and choose **New Desktop Folder**. On Windows 11, look under **Show more options**. For a portable install, first enable **Desktop right-click command** under the gear icon in the manager. You can also use the **+** icon in the manager. Hover over an icon to see its action.
 4. Double-click the desktop shortcut for the folder. You can open it with the manager closed.
-5. Drag an app shortcut or a file from File Explorer or the desktop into the popup to move it into local storage. Dragging an installed app’s shortcut moves the shortcut. To leave the source file in its current location, copy it and press **Ctrl+V** in the popup.
-6. Use **Folder icon color** during creation or under **Edit → Shortcuts**. Choose the standard Windows folder color or tint the same shape and see the result immediately in the color picker.
-7. Use **Appearance** for layout, transparency, and **Follow Windows**. Use **Behavior** for animations and the optional **×**. Edits and settings save automatically. **OK** closes the dialog. **About** shows version 1.4_1, the copyright notice, and separate GitHub profile and source links.
+5. Drag a file or app shortcut from File Explorer or the desktop into the popup, or copy it with **Ctrl+C** and press **Ctrl+V** in the popup. Both actions move the selected item into local storage and remove it from the original location. A Windows shortcut points to its installed app, so moving that shortcut leaves the installed application where Windows installed it.
+6. Use **Folder icon color** and **Folder symbol** during creation or under **Edit → Shortcuts**. Choose a color and optionally add a screwdriver, wrench, hammer, gear, home, cloud, star, or lightning symbol. The picker previews the outline and solid styles.
+7. Use **Appearance** for layout, transparency, and **Follow Windows**. Use **Behavior** for animations and the optional **×**. Edits and settings save automatically. **OK** closes the dialog. **About** shows version 1.4_2, the copyright notice, and separate GitHub profile and source links.
 
-When you start version 1.4_1, it consolidates shortcuts pointing to the same popup and removes the internal ID from the filename. If a normal Windows folder shares the name, the shortcut uses **(Pop-up)** to distinguish it. It moves older app-created folders to local storage. User-created folders stay on the desktop. Use **Open stored files** in the folder’s menu to find moved items.
+On startup, version 1.4_2 renames app-owned desktop shortcuts to the folder’s name and consolidates duplicates. A Windows directory with the same display name can coexist with the shortcut. An unrelated shortcut with the same filename is preserved. Use **Open stored files** in the folder’s menu to find moved items and folders migrated from earlier releases.
 
 Double-click the tray icon to reopen the manager. Use **Repair desktop item** to recreate a missing popup shortcut. **Settings** contains startup, the desktop right-click command, language, and appearance. If you move the portable app, toggle the desktop command off and on to update its path. Removing a popup preserves its stored files.
 
@@ -54,7 +54,7 @@ winget install --id JRSoftware.InnoSetup --exact --source winget --scope user
 powershell -ExecutionPolicy Bypass -File .\scripts\Publish.ps1 -Installer
 ```
 
-The publish script runs the Windows smoke test against the self-contained executable and writes the executable directory, portable ZIP, and optional installer to `artifacts`. The smoke test covers Arabic Shell paths, duplicate shortcut cleanup, migration of app-owned folders, file moves and rollback, dark Settings, and the About window. Verify Windows Hello authentication, physical mixed-DPI placement, and Windows 10 behavior on representative machines.
+The publish script runs the Windows smoke test against the self-contained executable and writes the executable directory, portable ZIP, and optional installer to `artifacts`. The smoke test covers Arabic Shell paths, duplicate shortcut cleanup, file moves and rollback, tile alignment at multiple widths, the 256 px icon frames, symbol previews, and the About window. Verify Windows Hello authentication, physical mixed-DPI placement, and Windows 10 behavior on representative machines.
 
 ## Architecture and local data
 
