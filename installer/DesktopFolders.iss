@@ -5,7 +5,7 @@
 [Setup]
 AppId={{ECF0B355-85BB-43AD-BA8C-00F1337DFE65}
 AppName=Desktop Folders
-AppVersion=1.0.0
+AppVersion=1.1.0
 DefaultDirName={localappdata}\Programs\Desktop Folders
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible and not arm64
@@ -24,6 +24,11 @@ Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{userprograms}\Desktop Folders"; Filename: "{app}\DesktopFolders.exe"; WorkingDir: "{app}"
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\DesktopBackground\Shell\DesktopFolders.New"; ValueType: string; ValueData: "New Desktop Folder..."; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\DesktopBackground\Shell\DesktopFolders.New"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\DesktopFolders.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\DesktopBackground\Shell\DesktopFolders.New\command"; ValueType: string; ValueData: """{app}\DesktopFolders.exe"" --new-folder"
 
 [Run]
 Filename: "{app}\DesktopFolders.exe"; Description: "Open Desktop Folders"; Flags: nowait postinstall skipifsilent

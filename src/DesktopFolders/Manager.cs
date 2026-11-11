@@ -63,15 +63,15 @@ internal sealed class Manager : Window
         var bottom = new StackPanel { Margin = new(0, 12, 0, 0) };
         var actions = new WrapPanel();
         var menu = new ContextMenu { FlowDirection = Words.Direction };
-        Add(L("Open", "فتح"), async () => { if (Selected is { } folder) await app.Open(folder); });
+        Add(L("Open panel", "فتح اللوحة"), async () => { if (Selected is { } folder) await app.Open(folder); });
         Add(L("Edit", "تعديل"), async () => { if (Selected is { } folder) await app.Edit(folder); });
         Add(L("Duplicate", "تكرار"), Duplicate);
         Add(L("Delete", "حذف"), Delete);
         Add(L("Move up", "نقل لأعلى"), () => ViewModel.MoveSelection(-1));
         Add(L("Move down", "نقل لأسفل"), () => ViewModel.MoveSelection(1));
-        Add(L("Repair desktop shortcut", "إصلاح اختصار سطح المكتب"), () =>
+        Add(L("Repair desktop item", "إصلاح عنصر سطح المكتب"), () =>
         {
-            if (Selected is { } folder) app.TryShell(() => WindowsServices.SyncLink(folder));
+            if (Selected is { } folder) app.TryShell(() => WindowsServices.SyncDesktop(folder));
         });
         folders.ContextMenu = menu;
         bottom.Children.Add(actions);
@@ -95,6 +95,12 @@ internal sealed class Manager : Window
             Build();
         });
         preferences.Children.Add(startup);
+        preferences.Children.Add(Check(L("Desktop right-click command", "أمر القائمة السياقية لسطح المكتب"),
+            WindowsServices.HasDesktopMenu(), value =>
+            {
+                app.TryShell(() => WindowsServices.SetDesktopMenu(value, Words));
+                Build();
+            }));
         preferences.Children.Add(Check(L("Animations", "الحركات"), app.Data.Animate, value =>
         {
             app.Data.Animate = value;
@@ -106,6 +112,7 @@ internal sealed class Manager : Window
             if (!app.Save()) { app.Data.Arabic = !app.Data.Arabic; return; }
             Build();
             app.BuildTray();
+            if (WindowsServices.HasDesktopMenu()) app.TryShell(() => WindowsServices.SetDesktopMenu(true, Words));
         }));
         bottom.Children.Add(preferences);
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -135,7 +142,7 @@ internal sealed class Manager : Window
     {
         var name = Ui.Prompt(this, Words, L("Folder name", "اسم المجلد"), demo ? L("Demo", "تجريبي") : "");
         if (name is null) return;
-        var folder = new Folder { Name = name };
+        var folder = new Folder { Name = name, ExplorerFolder = true };
         if (demo)
         {
             try
@@ -160,7 +167,7 @@ internal sealed class Manager : Window
 
     private void AddFolder(Folder folder)
     {
-        if (ViewModel.Add(folder)) app.TryShell(() => WindowsServices.SyncLink(folder));
+        if (ViewModel.Add(folder)) app.TryShell(() => WindowsServices.SyncDesktop(folder));
     }
 
     private void Duplicate()
@@ -171,12 +178,15 @@ internal sealed class Manager : Window
 
     private void Delete()
     {
-        if (Selected is not { } folder || MessageBox.Show(this,
-            L("Delete this folder and its desktop shortcut?", "هل تريد حذف هذا المجلد واختصاره من سطح المكتب؟"),
+        if (Selected is not { } folder || MessageBox.Show(this, folder.ExplorerFolder
+            ? L("Remove this folder from the manager? Its Windows folder and contents will stay on the desktop.",
+                "هل تريد إزالة المجلد من المدير؟ سيظل مجلد Windows ومحتوياته على سطح المكتب.")
+            : L("Delete this folder and its desktop shortcut?", "هل تريد حذف هذا المجلد واختصاره من سطح المكتب؟"),
             Title, MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         if (!ViewModel.Delete(folder)) return;
         app.TryShell(() =>
         {
+            if (folder.ExplorerFolder) ExplorerFolders.Detach(folder.Id, WindowsServices.Desktop);
             WindowsServices.RemoveLinks(folder.Id);
             File.Delete(Path.Combine(WindowsServices.DataDirectory, $"{folder.Id:N}.ico"));
         });

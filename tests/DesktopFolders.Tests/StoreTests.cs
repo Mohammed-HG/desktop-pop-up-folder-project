@@ -16,7 +16,9 @@ public sealed class StoreTests
         folder.Panel.Transparency = 100;
         folder.Panel.RememberPosition = true;
         folder.Panel.X = -400;
-        data.Folders.Add(new() { Name = "Demo" });
+        var native = new Folder { Name = "Demo", ExplorerFolder = true, IconColor = "#72B755" };
+        native.Entries.Add(new() { Name = "Notes", Icon = "office:Word" });
+        data.Folders.Add(native);
         data.Folders.Add(folder);
         data.Folders.Move(1, 0);
         fixture.Store.Save(data);
@@ -33,6 +35,10 @@ public sealed class StoreTests
         Assert.AreEqual(Backdrop.Translucent, loaded.Folders[0].Panel.Background);
         Assert.AreEqual("https://example.org/", loaded.Folders[0].Entries.Single().Target);
         Assert.AreEqual(0d, loaded.Folders[1].Panel.Transparency);
+        Assert.IsFalse(loaded.Folders[0].ExplorerFolder);
+        Assert.IsTrue(loaded.Folders[1].ExplorerFolder);
+        Assert.AreEqual("#72B755", loaded.Folders[1].IconColor);
+        Assert.AreEqual("office:Word", loaded.Folders[1].Entries.Single().Icon);
     }
 
     [TestMethod]

@@ -50,11 +50,12 @@ internal static class Ui
 
     public static TextBox Field(string value) => new() { Text = value, Padding = new(7), MinWidth = 95 };
 
-    public static string? Prompt(Window owner, Words words, string title, string value = "")
+    public static string? Prompt(Window? owner, Words words, string title, string value = "")
     {
         var dialog = new Window { Owner = owner, SizeToContent = SizeToContent.Height,
-            Width = 430, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ShowInTaskbar = false };
+            Width = 430, ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = owner is null };
         SetWindow(dialog, words, title);
         var body = new StackPanel { Margin = new(18) };
         var field = Field(value);

@@ -21,7 +21,7 @@ internal static class WindowsServices
     public static string DataDirectory { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopFolders");
     private static string Executable => Environment.ProcessPath!;
-    private static string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    internal static string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     private static string Suffix(Guid id) => $" [{id.ToString("N")[..8]}].lnk";
     private static string Arguments(Guid id) => $"--open {id:D}";
     private static dynamic ScriptShell() => Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true)!)!;
@@ -46,6 +46,104 @@ internal static class WindowsServices
         else key.DeleteValue("DesktopFolders", false);
     }
 
+    private const string DesktopMenu = @"Software\Classes\DesktopBackground\Shell\DesktopFolders.New";
+
+    public static bool HasDesktopMenu()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(DesktopMenu + @"\command");
+        return key?.GetValue(null) is string;
+    }
+
+    public static void SetDesktopMenu(bool enabled, Words words)
+    {
+        if (!enabled)
+        {
+            Registry.CurrentUser.DeleteSubKeyTree(DesktopMenu, throwOnMissingSubKey: false);
+            return;
+        }
+        using var key = Registry.CurrentUser.CreateSubKey(DesktopMenu);
+        key.SetValue(null, words.Get("New Desktop Folder…", "مجلد سطح مكتب جديد…"));
+        key.SetValue("Icon", $"\"{Executable}\",0");
+        using var command = key.CreateSubKey("command");
+        command.SetValue(null, $"\"{Executable}\" --new-folder");
+    }
+
+    public static void SyncDesktop(Folder folder)
+    {
+        if (folder.ExplorerFolder && !folder.Locked)
+        {
+            ExplorerFolders.Sync(folder, Desktop);
+            RemoveLinks(folder.Id);
+        }
+        else SyncLink(folder);
+    }
+
+    internal static string SafeName(string? name, string fallback)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string((name ?? "").Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c)
+            .Take(60).ToArray()).Trim().TrimEnd('.');
+        if (safe.Length == 0) return fallback;
+        var device = safe.Split('.')[0].TrimEnd().ToUpperInvariant();
+        if (device is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
+            || (device.Length == 4 && (device.StartsWith("COM") || device.StartsWith("LPT"))
+                && "0123456789¹²³".Contains(device[3])))
+            return "_" + safe;
+        return safe;
+    }
+
+    internal static bool WriteEntryLink(Entry entry, string output, string directory)
+    {
+        var kind = Targets.Classify(entry.Target);
+        if (kind == TargetKind.Invalid || (kind == TargetKind.File && !File.Exists(entry.Target))) return false;
+        string? icon = null;
+        if (IconPresets.Icon(entry.Icon) is { } bytes)
+        {
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..16];
+            icon = Path.Combine(directory, $".desktopfolders-app-{hash}.ico");
+            if (!File.Exists(icon))
+            {
+                using var stream = new FileStream(icon, FileMode.CreateNew);
+                stream.Write(bytes);
+                File.SetAttributes(icon, FileAttributes.Hidden);
+            }
+        }
+        if (kind == TargetKind.Web)
+        {
+            var iconInfo = icon is null ? "" : $"IconFile={icon}\r\nIconIndex=0\r\n";
+            File.WriteAllText(output, $"[InternetShortcut]\r\nURL={new Uri(entry.Target).AbsoluteUri}\r\n{iconInfo}",
+                System.Text.Encoding.Unicode);
+            return true;
+        }
+        var extension = Path.GetExtension(entry.Target);
+        if (kind == TargetKind.File && extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+        {
+            File.Copy(entry.Target, output);
+            File.SetAttributes(output, FileAttributes.Normal);
+            return true;
+        }
+        dynamic shell = ScriptShell();
+        var copy = kind == TargetKind.File && extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+        if (copy)
+        {
+            File.Copy(entry.Target, output);
+            File.SetAttributes(output, FileAttributes.Normal);
+            if (icon is null) return true;
+        }
+        dynamic link = shell.CreateShortcut(output);
+        if (!copy)
+        {
+            link.TargetPath = kind == TargetKind.AppsFolder
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")
+                : entry.Target;
+            link.Arguments = kind == TargetKind.AppsFolder ? $"\"{entry.Target}\"" : "";
+            link.WorkingDirectory = Path.GetDirectoryName((string)link.TargetPath);
+        }
+        if (icon is not null) link.IconLocation = icon + ",0";
+        link.Save();
+        return true;
+    }
+
     private static bool Owns(dynamic shell, string path, Guid id)
     {
         dynamic link = shell.CreateShortcut(path);
@@ -63,9 +161,7 @@ internal static class WindowsServices
 
     public static void SyncLink(Folder folder, string? directory = null)
     {
-        var safe = new string(folder.Name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || char.IsControl(c) ? '_' : c)
-            .Take(60).ToArray()).Trim().TrimEnd('.');
-        if (safe.Length == 0) safe = "Folder";
+        var safe = SafeName(folder.Name, "Folder");
         dynamic shell = ScriptShell();
         var destination = directory ?? Desktop;
         var path = Path.Combine(destination, safe + Suffix(folder.Id));
@@ -77,22 +173,16 @@ internal static class WindowsServices
         link.Description = "Desktop Folders";
         link.WorkingDirectory = AppContext.BaseDirectory;
         link.IconLocation = Executable + ",0";
-        if (!string.IsNullOrWhiteSpace(folder.Icon) && File.Exists(folder.Icon))
+        if (!string.IsNullOrWhiteSpace(folder.Icon) || !string.IsNullOrWhiteSpace(folder.IconColor))
         {
             try
             {
-                var icon = Path.Combine(DataDirectory, $"{folder.Id:N}.ico");
-                using var bitmap = new Drawing.Bitmap(folder.Icon);
-                using var scaled = new Drawing.Bitmap(bitmap, 48, 48);
-                var handle = scaled.GetHicon();
-                try
+                if (IconPresets.Icon(folder.Icon, folder.IconColor) is { } bytes)
                 {
-                    using var drawingIcon = Drawing.Icon.FromHandle(handle);
-                    using var output = File.Create(icon);
-                    drawingIcon.Save(output);
+                    var icon = Path.Combine(DataDirectory, $"{folder.Id:N}.ico");
+                    File.WriteAllBytes(icon, bytes);
+                    link.IconLocation = icon + ",0";
                 }
-                finally { DestroyIcon(handle); }
-                link.IconLocation = icon + ",0";
             }
             catch (Exception error) { Log("desktop-icon", error); }
         }
@@ -146,6 +236,7 @@ internal static class WindowsServices
     {
         try
         {
+            if (IconPresets.Image(entry.Icon) is { } preset) return preset;
             if (!string.IsNullOrWhiteSpace(entry.Icon) && File.Exists(entry.Icon))
             {
                 using var stream = File.OpenRead(entry.Icon);

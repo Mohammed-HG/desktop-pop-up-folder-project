@@ -40,7 +40,8 @@ public partial class App : Application
         catch (AbandonedMutexException) { ownsInstance = true; }
 
         var command = e.Args is ["--open", var id] && Guid.TryParse(id, out var key)
-            ? key.ToString("D") : e.Args.Contains("--tray") ? "tray" : e.Args.Contains("--uninstall") ? "uninstall" : "manager";
+            ? key.ToString("D") : e.Args.Contains("--new-folder") ? "new-folder"
+            : e.Args.Contains("--tray") ? "tray" : e.Args.Contains("--uninstall") ? "uninstall" : "manager";
         if (!ownsInstance)
         {
             try
@@ -88,6 +89,7 @@ public partial class App : Application
             folder.Entries.Add(new Entry { Name = "Notepad", Target = Path.Combine(Environment.SystemDirectory, "notepad.exe") });
             folder.Entries.Add(apps[0]);
             CheckShortcutLifecycle();
+            CheckExplorerFolders();
             var data = new Preferences { Arabic = true };
             var managerView = new Manager(this);
             managerView.Show();
@@ -111,6 +113,55 @@ public partial class App : Application
         {
             Console.Error.WriteLine(error);
             Shutdown(1);
+        }
+    }
+
+    private static void CheckExplorerFolders()
+    {
+        var desktop = Directory.CreateTempSubdirectory("DesktopFolders.ExplorerSmoke-");
+        try
+        {
+            var existing = desktop.CreateSubdirectory("Work");
+            File.WriteAllText(Path.Combine(existing.FullName, "keep.txt"), "unmanaged");
+            var folder = new Folder { Name = "Work", ExplorerFolder = true, IconColor = "#72B755" };
+            folder.Entries.Add(new Entry { Name = "Notes", Target = Path.Combine(Environment.SystemDirectory, "notepad.exe"), Icon = "office:Word" });
+            folder.Entries.Add(new Entry { Name = "Docs", Target = "https://example.org/" });
+            var path = ExplorerFolders.Sync(folder, desktop.FullName);
+            if (path == existing.FullName || !File.Exists(Path.Combine(path, "Notes.lnk"))
+                || !File.Exists(Path.Combine(path, "Docs.url"))
+                || !File.ReadAllText(Path.Combine(path, "desktop.ini")).Contains("IconResource=")
+                || Directory.GetFiles(path, "*.ico").Length != 2
+                || IconPresets.Image("office:Word") is null)
+                throw new InvalidOperationException("Explorer folder, shortcuts, or icons were not created.");
+
+            File.WriteAllText(Path.Combine(path, "Notes.lnk"), "user replacement");
+            folder.Entries.RemoveAt(1);
+            folder.Name = "Renamed";
+            folder.IconColor = "#4998F4";
+            var moved = ExplorerFolders.Sync(folder, desktop.FullName);
+            if (Directory.Exists(path) || Path.GetFileName(moved) != "Renamed"
+                || File.ReadAllText(Path.Combine(moved, "Notes.lnk")) != "user replacement"
+                || File.Exists(Path.Combine(moved, "Docs.url"))
+                || !File.Exists(Path.Combine(moved, "Notes (2).lnk")))
+                throw new InvalidOperationException("Explorer folder update did not preserve user files.");
+            ExplorerFolders.Detach(folder.Id, desktop.FullName);
+            if (ExplorerFolders.Find(folder.Id, desktop.FullName) is not null || !Directory.Exists(moved)
+                || !File.Exists(Path.Combine(moved, "Notes (2).lnk")))
+                throw new InvalidOperationException("Detaching did not preserve the Windows folder.");
+        }
+        finally
+        {
+            foreach (var directory in desktop.GetDirectories())
+            {
+                foreach (var file in directory.GetFiles())
+                {
+                    file.Attributes = FileAttributes.Normal;
+                    file.Delete();
+                }
+                directory.Attributes = FileAttributes.Directory;
+                directory.Delete();
+            }
+            desktop.Delete();
         }
     }
 
@@ -163,6 +214,7 @@ public partial class App : Application
     private void Dispatch(string command)
     {
         if (command == "manager") ShowManager();
+        else if (command == "new-folder") CreateFromDesktop();
         else if (command == "uninstall") Cleanup();
         else if (Guid.TryParse(command, out var id))
         {
@@ -170,6 +222,21 @@ public partial class App : Application
             if (folder is null) MessageBox.Show(Words.Get("This folder no longer exists.", "لم يعد هذا المجلد موجودًا."));
             else _ = Open(folder);
         }
+    }
+
+    private void CreateFromDesktop()
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            var name = Ui.Prompt(null, Words, Words.Get("New Desktop Folder", "مجلد سطح مكتب جديد"));
+            if (name is null) return;
+            var folder = new Folder { Name = name, ExplorerFolder = true };
+            var viewModel = manager?.ViewModel ?? new FolderManagerViewModel(Data, Save);
+            if (viewModel.Add(folder)) TryShell(() => WindowsServices.SyncDesktop(folder));
+        }
+        finally { busy = false; }
     }
 
     private void Cleanup()
@@ -180,6 +247,7 @@ public partial class App : Application
                 TryShell(() => WindowsServices.RemoveLinks(folder.Id));
         }
         TryShell(() => WindowsServices.SetStartup(false));
+        TryShell(() => WindowsServices.SetDesktopMenu(false, Words));
         if (Data.StartWithWindows)
         {
             Data.StartWithWindows = false;
@@ -251,7 +319,7 @@ public partial class App : Application
             if (owner is not { IsVisible: true } || !Data.Folders.Contains(folder)) return;
             var editor = new Editor(Store.Clone(folder), Data) { Owner = owner };
             if (editor.ShowDialog() == true && owner.ViewModel.Apply(folder, editor.Draft))
-                TryShell(() => WindowsServices.SyncLink(editor.Draft));
+                TryShell(() => WindowsServices.SyncDesktop(editor.Draft));
         }
         finally { busy = false; }
     }
@@ -288,7 +356,8 @@ public partial class App : Application
         catch (Exception error)
         {
             WindowsServices.Log("update-windows", error);
-            MessageBox.Show(Words.Get("Windows could not update the shortcut or startup setting.", "تعذر على Windows تحديث الاختصار أو إعداد بدء التشغيل."));
+            MessageBox.Show(Words.Get("Windows could not update the desktop item or setting. See the local error log.",
+                "تعذر على Windows تحديث عنصر سطح المكتب أو الإعداد. راجع سجل الأخطاء المحلي."));
         }
     }
 

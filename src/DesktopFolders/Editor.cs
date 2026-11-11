@@ -44,6 +44,12 @@ internal sealed class Editor : Window
         var apply = Ui.Button(L("Save changes", "حفظ التغييرات"), async () =>
         {
             if (verifying) return;
+            if (Draft.ExplorerFolder && Draft.Locked)
+            {
+                MessageBox.Show(this, L("Turn off Windows Hello before converting to a Windows folder.",
+                    "أوقف Windows Hello قبل التحويل إلى مجلد Windows."));
+                return;
+            }
             if (!validName || !validColor)
             {
                 MessageBox.Show(this, L("Enter a folder name and a color in #RRGGBB format.", "أدخل اسمًا للمجلد ولونًا بالتنسيق ‎#RRGGBB."));
@@ -118,12 +124,31 @@ internal sealed class Editor : Window
             UpdatePreview();
         };
         Row(body, L("Folder name", "اسم المجلد"), name);
+        var native = Check(body, L("Use a normal Windows folder on the desktop", "استخدام مجلد Windows عادي على سطح المكتب"),
+            Draft.ExplorerFolder, value => Draft.ExplorerFolder = value);
+        native.IsEnabled = !Draft.ExplorerFolder;
+        native.ToolTip = L("A Windows folder opens in File Explorer and supports files. Windows Hello is available for popup folders.",
+            "يفتح مجلد Windows في مستكشف الملفات ويدعم الملفات. يتوفر Windows Hello لمجلدات اللوحة المنبثقة.");
         var icons = new WrapPanel();
+        icons.Children.Add(Ui.Button(L("Folder icon color", "لون أيقونة المجلد"), () =>
+        {
+            if (IconPresets.PickColor(this, words, Draft.IconColor) is not { } color) return;
+            Draft.Icon = "";
+            Draft.IconColor = color;
+        }));
+        icons.Children.Add(Ui.Button(L("Office folder icon", "أيقونة Office للمجلد"), () =>
+        {
+            if (IconPresets.Pick(this, words) is { } icon) Draft.Icon = icon;
+        }));
         icons.Children.Add(Ui.Button(L("Choose folder icon", "اختيار أيقونة المجلد"), () =>
         {
             if (PickImage() is { } image) Draft.Icon = image;
         }));
-        icons.Children.Add(Ui.Button(L("Reset folder icon", "إعادة ضبط أيقونة المجلد"), () => Draft.Icon = ""));
+        icons.Children.Add(Ui.Button(L("Reset folder icon", "إعادة ضبط أيقونة المجلد"), () =>
+        {
+            Draft.Icon = "";
+            Draft.IconColor = "";
+        }));
         body.Children.Add(icons);
 
         var add = new WrapPanel { Margin = new(0, 9, 0, 0) };
@@ -204,6 +229,14 @@ internal sealed class Editor : Window
         manage.Children.Add(Ui.Button(L("Custom icon", "أيقونة مخصصة"), () =>
         {
             if (entries.SelectedItem is Entry entry && PickImage() is { } image) { entry.Icon = image; UpdatePreview(); }
+        }));
+        manage.Children.Add(Ui.Button(L("Office icon", "أيقونة Office"), () =>
+        {
+            if (entries.SelectedItem is Entry entry && IconPresets.Pick(this, words) is { } icon)
+            {
+                entry.Icon = icon;
+                UpdatePreview();
+            }
         }));
         manage.Children.Add(Ui.Button(L("Reset icon", "إعادة ضبط الأيقونة"), () =>
         {
@@ -347,6 +380,11 @@ internal sealed class Editor : Window
         Check(body, L("Animate icons on hover", "تحريك الأيقونات عند مرور المؤشر"), Panel.Hover, value => Panel.Hover = value);
         Number(body, L("Duration in ms (0–400)", "المدة بالمللي ثانية (0–400)"), Panel.Duration, 0, 400, value => Panel.Duration = (int)value);
         var lockToggle = Check(body, L("Lock with Windows Hello", "القفل باستخدام Windows Hello"), Draft.Locked, value => Draft.Locked = value);
+        if (Draft.ExplorerFolder && !Draft.Locked)
+        {
+            lockToggle.IsEnabled = false;
+            body.Children.Add(Ui.Text(L("Normal Windows folders open directly in File Explorer.", "تُفتح مجلدات Windows العادية مباشرة في مستكشف الملفات."), 12));
+        }
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
         {
             lockToggle.IsEnabled = false;

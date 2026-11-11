@@ -18,6 +18,8 @@ public sealed class Folder
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "Folder";
     public string Icon { get; set; } = "";
+    public string IconColor { get; set; } = "";
+    public bool ExplorerFolder { get; set; }
     public bool Locked { get; set; }
     public ObservableCollection<Entry> Entries { get; set; } = [];
     public PanelSettings Panel { get; set; } = new();
