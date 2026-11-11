@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using DesktopFolders.Core;
 using Microsoft.Win32;
 
@@ -18,18 +19,19 @@ internal sealed class Editor : Window
     private readonly ListBox entries = new() { Height = 190, DisplayMemberPath = nameof(Entry.Name), AllowDrop = true };
     private Point dragOrigin;
     private Entry? dragEntry;
-    private bool validName = true;
-    private bool validColor = true;
-    private bool verifying;
-    private readonly bool originallyLocked;
+    private readonly Func<Folder, bool>? commit;
+    private readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(220) };
+    private bool dirty;
+    private TextBox? nameField;
     public Folder Draft { get; }
     private PanelSettings Panel => Draft.Panel;
     private string L(string en, string ar) => words.Get(en, ar);
 
-    public Editor(Folder draft, Preferences preferences)
+    public Editor(Folder draft, Preferences preferences, Func<Folder, bool>? commit = null)
     {
         Draft = draft;
-        originallyLocked = draft.Locked;
+        this.commit = commit;
+        saveTimer.Tick += (_, _) => Flush();
         words = new(preferences.Arabic);
         Width = 910;
         Height = 680;
@@ -41,33 +43,8 @@ internal sealed class Editor : Window
 
         var root = new DockPanel { Margin = new(18) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 10, 0, 0) };
-        var apply = Ui.Button(Glyph.Check, L("Save changes", "حفظ التغييرات"), async () =>
-        {
-            if (verifying) return;
-            if (Draft.ExplorerFolder && Draft.Locked)
-            {
-                MessageBox.Show(this, L("Turn off Windows Hello before adding a normal Windows folder.",
-                    "أوقف Windows Hello قبل إضافة مجلد Windows عادي."));
-                return;
-            }
-            if (!validName || !validColor)
-            {
-                MessageBox.Show(this, L("Enter a folder name and a color in #RRGGBB format.", "أدخل اسمًا للمجلد ولونًا بالتنسيق ‎#RRGGBB."));
-                return;
-            }
-            if (Draft.Locked && !originallyLocked)
-            {
-                verifying = true;
-                try { if (!await Hello.Verify(this, words) || !IsVisible) return; }
-                finally { verifying = false; }
-            }
-            Draft.Panel.Normalize();
-            DialogResult = true;
-        }, true);
-        actions.Children.Add(apply);
-        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => DialogResult = false);
-        cancel.IsCancel = true;
-        actions.Children.Add(cancel);
+        actions.Children.Add(Ui.Ok(Close));
+        Closing += (_, _) => { CommitName(); Flush(); };
         DockPanel.SetDock(actions, Dock.Bottom);
         root.Children.Add(actions);
 
@@ -95,7 +72,7 @@ internal sealed class Editor : Window
         layout.Children.Add(previewLayout);
         root.Children.Add(layout);
         Content = root;
-        UpdatePreview();
+        UpdatePreview(changed: false);
     }
 
     private static TabItem Tab(string title, UIElement content) => new()
@@ -104,59 +81,55 @@ internal sealed class Editor : Window
         Content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = content }
     };
 
-    private void UpdatePreview()
+    private void UpdatePreview(bool changed = true)
     {
         preview.Preview.Width = Panel.Width;
         preview.Preview.Height = Panel.Height;
         preview.Refresh();
+        if (!changed || commit is null) return;
+        dirty = true;
+        saveTimer.Stop();
+        saveTimer.Start();
+    }
+
+    private bool Flush()
+    {
+        saveTimer.Stop();
+        if (!dirty || commit is null) return true;
+        if (!commit(Draft)) return false;
+        dirty = false;
+        return true;
+    }
+
+    private void CommitName()
+    {
+        if (nameField is null || string.IsNullOrWhiteSpace(nameField.Text))
+        {
+            if (nameField is not null) nameField.Text = Draft.Name;
+            return;
+        }
+        var name = nameField.Text.Trim();
+        if (name == Draft.Name) return;
+        Draft.Name = name;
+        UpdatePreview();
     }
 
     private StackPanel ShortcutTab()
     {
         var body = new StackPanel { Margin = new(10) };
         var name = Ui.Field(Draft.Name);
+        nameField = name;
         name.MaxLength = 120;
-        name.TextChanged += (_, _) =>
-        {
-            validName = !string.IsNullOrWhiteSpace(name.Text);
-            if (validName) Draft.Name = name.Text.Trim();
-            UpdatePreview();
-        };
+        name.LostKeyboardFocus += (_, _) => { CommitName(); Flush(); };
         Row(body, L("Folder name", "اسم المجلد"), name);
-        var native = Check(body, L("Also create a normal Windows folder", "إنشاء مجلد Windows عادي أيضًا"),
-            Draft.ExplorerFolder, value => Draft.ExplorerFolder = value);
-        native.IsEnabled = !Draft.ExplorerFolder;
-        native.ToolTip = L("Also creates a normal Windows folder for files. The popup shortcut remains on the desktop.",
-            "ينشئ أيضًا مجلد Windows عاديًا للملفات. يبقى اختصار النافذة المنبثقة على سطح المكتب.");
         var icons = new WrapPanel();
-        var folderImage = new Image { Source = IconPresets.FolderImage(Draft), Width = 32, Height = 32,
-            Margin = new(0, 0, 8, 6) };
-        icons.Children.Add(folderImage);
         icons.Children.Add(Ui.Button(Glyph.Color, L("Folder icon color", "لون أيقونة المجلد"), () =>
-        {
-            if (IconPresets.PickColor(this, words, Draft.IconColor) is not { } color) return;
-            Draft.Icon = "";
-            Draft.IconColor = color;
-            folderImage.Source = IconPresets.FolderImage(Draft);
-        }));
-        icons.Children.Add(Ui.Button(Glyph.Apps, L("Office folder icon", "أيقونة Office للمجلد"), () =>
-        {
-            if (IconPresets.Pick(this, words) is not { } icon) return;
-            Draft.Icon = icon;
-            folderImage.Source = IconPresets.FolderImage(Draft);
-        }));
-        icons.Children.Add(Ui.Button(Glyph.Image, L("Choose folder icon", "اختيار أيقونة المجلد"), () =>
-        {
-            if (PickImage() is not { } image) return;
-            Draft.Icon = image;
-            folderImage.Source = IconPresets.FolderImage(Draft);
-        }));
-        icons.Children.Add(Ui.Button(Glyph.Repair, L("Reset folder icon", "إعادة ضبط أيقونة المجلد"), () =>
-        {
-            Draft.Icon = "";
-            Draft.IconColor = "";
-            folderImage.Source = IconPresets.FolderImage(Draft);
-        }));
+            IconPresets.PickColor(this, words, Draft.IconColor, color =>
+            {
+                Draft.IconColor = color;
+                UpdatePreview();
+                Flush();
+            })));
         body.Children.Add(icons);
 
         var add = new WrapPanel { Margin = new(0, 9, 0, 0) };
@@ -175,7 +148,7 @@ internal sealed class Editor : Window
             else MessageBox.Show(this, L("Enter a valid web address.", "أدخل عنوان ويب صالحًا."));
         }));
         body.Children.Add(add);
-        var tip = Ui.Text(L("Drop files here. Drag shortcuts to reorder them.", "أفلت الملفات هنا. اسحب الاختصارات لإعادة ترتيبها."), 12);
+        var tip = Ui.Text(L("Drop files here to move them. Drag shortcuts to reorder them.", "أفلت الملفات هنا لنقلها. اسحب الاختصارات لإعادة ترتيبها."), 12);
         tip.Foreground = Ui.Muted;
         tip.Margin = new(0, 5, 0, 5);
         body.Children.Add(tip);
@@ -196,13 +169,18 @@ internal sealed class Editor : Window
         };
         entries.DragOver += (_, e) =>
         {
-            e.Effects = e.Data.GetDataPresent(typeof(Entry)) ? DragDropEffects.Move :
-                e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && (e.Data.GetDataPresent(typeof(Entry))
+                || e.Data.GetDataPresent(DataFormats.FileDrop)) ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
         };
         entries.Drop += (_, e) =>
         {
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] paths) AddFiles(paths);
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+            {
+                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && MoveFiles(paths)
+                    ? DragDropEffects.Move : DragDropEffects.None;
+                e.Handled = true;
+            }
             else if (e.Data.GetData(typeof(Entry)) is Entry entry && Draft.Entries.Contains(entry))
             {
                 var target = ItemAt(e.OriginalSource as DependencyObject);
@@ -266,6 +244,23 @@ internal sealed class Editor : Window
         return body;
     }
 
+    private bool MoveFiles(string[] paths)
+    {
+        if (commit is null || !Flush()) return false;
+        try
+        {
+            if (!FolderStorage.MoveFiles(Draft, paths, () => commit(Draft))) return false;
+            UpdatePreview(changed: false);
+            return true;
+        }
+        catch (Exception error)
+        {
+            WindowsServices.Log("move-files", error);
+            MessageBox.Show(this, L("Windows could not move the selected files.", "تعذر على ويندوز نقل الملفات المحددة."));
+            return false;
+        }
+    }
+
     private Entry? ItemAt(DependencyObject? origin) =>
         origin is not null && ItemsControl.ContainerFromElement(entries, origin) is ListBoxItem container
             ? container.Content as Entry : null;
@@ -322,15 +317,14 @@ internal sealed class Editor : Window
         DockPanel.SetDock(search, Dock.Top);
         content.Children.Add(search);
         var list = new ListBox { ItemsSource = apps, DisplayMemberPath = nameof(Entry.Name) };
-        var choose = Ui.Button(Glyph.Check, L("Add selected app", "إضافة التطبيق المحدد"), () =>
+        var choose = Ui.Ok(() =>
         {
             if (list.SelectedItem is Entry entry)
             {
                 Add(new() { Name = entry.Name, Target = entry.Target });
                 dialog.DialogResult = true;
             }
-        }, true);
-        choose.IsDefault = true;
+        });
         choose.Margin = new(0, 8, 0, 0);
         list.MouseDoubleClick += (_, _) => choose.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         search.TextChanged += (_, _) =>
@@ -367,8 +361,7 @@ internal sealed class Editor : Window
         color.MaxLength = 7;
         color.TextChanged += (_, _) =>
         {
-            validColor = color.Text.Length == 7 && color.Text[0] == '#' && color.Text[1..].All(Uri.IsHexDigit);
-            if (validColor) { Panel.Color = color.Text; UpdatePreview(); }
+            if (IconPresets.IsFolderColor(color.Text)) { Panel.Color = color.Text; UpdatePreview(); }
         };
         Row(body, L("Custom color (#RRGGBB)", "اللون المخصص (‎#RRGGBB)"), color);
         Slider(body, L("Transparency (%)", "الشفافية (%)"), Panel.Transparency, 0, 100, value => Panel.Transparency = value);
@@ -389,12 +382,28 @@ internal sealed class Editor : Window
             (int)Panel.Animation, value => Panel.Animation = (AnimationChoice)value);
         Check(body, L("Animate icons on hover", "تحريك الأيقونات عند مرور المؤشر"), Panel.Hover, value => Panel.Hover = value);
         Number(body, L("Duration in ms (0–400)", "المدة بالمللي ثانية (0–400)"), Panel.Duration, 0, 400, value => Panel.Duration = (int)value);
-        var lockToggle = Check(body, L("Lock with Windows Hello", "القفل باستخدام Windows Hello"), Draft.Locked, value => Draft.Locked = value);
-        if (Draft.ExplorerFolder && !Draft.Locked)
+        var lockToggle = new CheckBox { Content = L("Lock with Windows Hello", "القفل باستخدام Windows Hello"),
+            IsChecked = Draft.Locked, Margin = new(0, 7, 0, 7) };
+        body.Children.Add(lockToggle);
+        lockToggle.Click += async (_, _) =>
         {
             lockToggle.IsEnabled = false;
-            body.Children.Add(Ui.Text(L("Normal Windows folders open directly in File Explorer.", "تُفتح مجلدات Windows العادية مباشرة في مستكشف الملفات."), 12));
-        }
+            try
+            {
+                var locked = lockToggle.IsChecked == true;
+                if (locked && !await Hello.Verify(this, words)) return;
+                if (!IsVisible) return;
+                var previous = Draft.Locked;
+                Draft.Locked = locked;
+                UpdatePreview();
+                if (!Flush()) Draft.Locked = previous;
+            }
+            finally
+            {
+                lockToggle.IsChecked = Draft.Locked;
+                lockToggle.IsEnabled = true;
+            }
+        };
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
         {
             lockToggle.IsEnabled = false;

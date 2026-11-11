@@ -6,7 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using DesktopFolders.Core;
 using D = System.Drawing;
 
 namespace DesktopFolders;
@@ -41,13 +40,11 @@ internal static class IconPresets
         return Images[preset.Name] = frame;
     }
 
-    public static ImageSource FolderImage(Folder folder) => FolderImage(folder.IconColor, folder.Icon);
-
-    private static ImageSource FolderImage(string color, string icon = "")
+    private static ImageSource FolderImage(string color)
     {
         try
         {
-            if (Icon(icon, color) is not { } bytes) return WindowsServices.WindowsFolderImage;
+            if (Icon("", color) is not { } bytes) return WindowsServices.WindowsFolderImage;
             using var stream = new MemoryStream(bytes);
             return BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
         }
@@ -72,43 +69,63 @@ internal static class IconPresets
 
     private static byte[] Render(Preset? preset, string? color)
     {
+        if (preset is null) return TintWindowsFolder(color!);
         using var bitmap = new D.Bitmap(64, 64);
         using var graphics = D.Graphics.FromImage(bitmap);
         graphics.SmoothingMode = D.Drawing2D.SmoothingMode.AntiAlias;
         graphics.TextRenderingHint = D.Text.TextRenderingHint.AntiAliasGridFit;
-        if (preset is null)
-        {
-            var fill = D.ColorTranslator.FromHtml(color!);
-            using var back = new D.SolidBrush(D.Color.FromArgb(fill.R * 3 / 4, fill.G * 3 / 4, fill.B * 3 / 4));
-            using var front = new D.SolidBrush(fill);
-            graphics.FillPolygon(back, new D.Point[] { new(3, 16), new(25, 16), new(32, 23), new(61, 23), new(61, 54), new(3, 54) });
-            graphics.FillPolygon(front, new D.Point[] { new(3, 27), new(61, 27), new(56, 55), new(3, 55) });
-            using var shine = new D.Pen(D.Color.FromArgb(150, D.Color.White), 2);
-            graphics.DrawLine(shine, 7, 29, 57, 29);
-        }
-        else
-        {
-            using var fill = new D.SolidBrush(D.ColorTranslator.FromHtml(preset.Color));
-            graphics.FillRectangle(fill, 6, 6, 52, 52);
-            using var shine = new D.SolidBrush(D.Color.FromArgb(38, D.Color.White));
-            graphics.FillRectangle(shine, 44, 6, 14, 52);
-            using var font = new D.Font("Segoe UI", 31, D.FontStyle.Bold, D.GraphicsUnit.Pixel);
-            using var format = new D.StringFormat { Alignment = D.StringAlignment.Center, LineAlignment = D.StringAlignment.Center };
-            graphics.DrawString(preset.Letter, font, D.Brushes.White, new D.RectangleF(5, 5, 52, 52), format);
-        }
+        using var fill = new D.SolidBrush(D.ColorTranslator.FromHtml(preset.Color));
+        graphics.FillRectangle(fill, 6, 6, 52, 52);
+        using var shine = new D.SolidBrush(D.Color.FromArgb(38, D.Color.White));
+        graphics.FillRectangle(shine, 44, 6, 14, 52);
+        using var font = new D.Font("Segoe UI", 31, D.FontStyle.Bold, D.GraphicsUnit.Pixel);
+        using var format = new D.StringFormat { Alignment = D.StringAlignment.Center, LineAlignment = D.StringAlignment.Center };
+        graphics.DrawString(preset.Letter, font, D.Brushes.White, new D.RectangleF(5, 5, 52, 52), format);
         return Encode(bitmap);
+    }
+
+    private static byte[] TintWindowsFolder(string color)
+    {
+        var native = (BitmapSource)WindowsServices.WindowsFolderImage;
+        var scaled = new TransformedBitmap(native, new ScaleTransform(64d / native.PixelWidth, 64d / native.PixelHeight));
+        var source = new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
+        var pixels = new byte[64 * 64 * 4];
+        source.CopyPixels(pixels, 64 * 4, 0);
+        var tint = (Color)ColorConverter.ConvertFromString(color);
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            if (pixels[i + 3] == 0) continue;
+            var shade = (pixels[i] + pixels[i + 1] * 5 + pixels[i + 2] * 2) / 8d;
+            byte Shade(byte component) => (byte)Math.Clamp(shade <= 190
+                ? component * shade / 190
+                : component + (255 - component) * (shade - 190) / 65, 0, 255);
+            pixels[i] = Shade(tint.B);
+            pixels[i + 1] = Shade(tint.G);
+            pixels[i + 2] = Shade(tint.R);
+        }
+        var image = BitmapSource.Create(64, 64, 96, 96, PixelFormats.Bgra32, null, pixels, 64 * 4);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        using var png = new MemoryStream();
+        encoder.Save(png);
+        return EncodePng(png.ToArray());
     }
 
     private static byte[] Encode(D.Bitmap bitmap)
     {
         using var png = new MemoryStream();
         bitmap.Save(png, D.Imaging.ImageFormat.Png);
+        return EncodePng(png.ToArray());
+    }
+
+    private static byte[] EncodePng(byte[] png)
+    {
         using var file = new MemoryStream();
         using var writer = new BinaryWriter(file);
         writer.Write(new byte[] { 0, 0, 1, 0, 1, 0, 64, 64, 0, 0, 1, 0, 32, 0 });
-        writer.Write((int)png.Length);
+        writer.Write(png.Length);
         writer.Write(22);
-        writer.Write(png.ToArray());
+        writer.Write(png);
         return file.ToArray();
     }
 
@@ -131,7 +148,7 @@ internal static class IconPresets
         return dialog.ShowDialog() == true ? chosen : null;
     }
 
-    public static string? PickColor(Window owner, Words words, string current)
+    public static void PickColor(Window owner, Words words, string current, Action<string> apply)
     {
         string L(string en, string ar) => words.Get(en, ar);
         var dialog = new Window { Owner = owner, Width = 400, SizeToContent = SizeToContent.Height,
@@ -174,34 +191,36 @@ internal static class IconPresets
         custom.Children.Add(colors);
         custom.Children.Add(Ui.Text(L("Custom color (#RRGGBB)", "لون مخصص (‎#RRGGBB)")));
         custom.Children.Add(field);
+        var applied = current;
         void Refresh()
         {
             custom.IsEnabled = useCustom.IsChecked == true;
-            preview.Source = FolderImage(custom.IsEnabled && IsFolderColor(field.Text) ? field.Text : "");
+            var selected = custom.IsEnabled ? field.Text : "";
+            if (custom.IsEnabled && !IsFolderColor(selected)) return;
+            preview.Source = FolderImage(selected);
+            if (!string.Equals(applied, selected, StringComparison.OrdinalIgnoreCase))
+            {
+                apply(selected);
+                applied = selected;
+            }
         }
         useWindows.Checked += (_, _) => Refresh();
         useCustom.Checked += (_, _) => Refresh();
         field.TextChanged += (_, _) => Refresh();
         Refresh();
-        string? selected = null;
         var buttons = new WrapPanel();
-        var save = Ui.Button(Glyph.Check, L("Apply color", "تطبيق اللون"), () =>
+        var save = Ui.Ok(() =>
         {
             if (useCustom.IsChecked == true && !IsFolderColor(field.Text))
             {
                 field.Focus();
                 return;
             }
-            selected = useCustom.IsChecked == true ? field.Text : "";
-            dialog.DialogResult = true;
-        }, true);
-        save.IsDefault = true;
+            dialog.Close();
+        });
         buttons.Children.Add(save);
-        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => dialog.DialogResult = false);
-        cancel.IsCancel = true;
-        buttons.Children.Add(cancel);
         body.Children.Add(buttons);
         dialog.Content = body;
-        return dialog.ShowDialog() == true ? selected : null;
+        dialog.ShowDialog();
     }
 }

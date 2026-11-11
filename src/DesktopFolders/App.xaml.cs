@@ -78,11 +78,18 @@ public partial class App : Application
         }
         if (!Store.ReadOnly && Store.Recovery is null)
         {
+            var targetsChanged = false;
             foreach (var folder in Data.Folders)
             {
+                if (folder.ExplorerFolder)
+                {
+                    try { targetsChanged |= FolderStorage.MigrateDesktopFolders(folder, WindowsServices.Desktop); }
+                    catch (Exception error) { WindowsServices.Log("migrate-desktop-folder", error); }
+                }
                 try { WindowsServices.SyncLink(folder); }
                 catch (Exception error) { WindowsServices.Log("refresh-desktop-launcher", error); }
             }
+            if (targetsChanged) Save();
         }
         Dispatch(e.Args);
     }
@@ -101,7 +108,7 @@ public partial class App : Application
             folder.Entries.Add(apps[0]);
             CheckShortcutLifecycle();
             if (checkDesktop) CheckRedirectedDesktop();
-            CheckExplorerFolders();
+            CheckFolderStorage();
             var data = new Preferences { Arabic = true };
             var managerView = new Manager(this);
             managerView.Show();
@@ -132,8 +139,8 @@ public partial class App : Application
             var about = new AboutWindow(new Words(false));
             about.Show();
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (AboutWindow.DisplayVersion != "1.4" || about.ActualHeight <= 0)
-                throw new InvalidOperationException("The About window did not render version 1.4.");
+            if (AboutWindow.DisplayVersion != "1.4_1" || about.ActualHeight <= 0)
+                throw new InvalidOperationException("The About window did not render version 1.4_1.");
             about.Close();
             Shutdown();
         }
@@ -158,61 +165,36 @@ public partial class App : Application
         finally { File.Delete(path); }
     }
 
-    private static void CheckExplorerFolders()
+    private static void CheckFolderStorage()
     {
-        var desktop = Directory.CreateTempSubdirectory("DesktopFolders.ExplorerSmoke-");
+        var fixture = Directory.CreateTempSubdirectory("DesktopFolders.StorageSmoke-");
         try
         {
-            var existing = desktop.CreateSubdirectory("Work");
-            File.WriteAllText(Path.Combine(existing.FullName, "keep.txt"), "unmanaged");
-            var folder = new Folder { Name = "Work", ExplorerFolder = true, IconColor = "#72B755" };
-            folder.Entries.Add(new Entry { Name = "Notes", Target = Path.Combine(Environment.SystemDirectory, "notepad.exe"), Icon = "office:Word" });
-            folder.Entries.Add(new Entry { Name = "Docs", Target = "https://example.org/" });
-            WindowsServices.SyncDesktop(folder, desktop.FullName);
-            var path = ExplorerFolders.Find(folder.Id, desktop.FullName)
-                ?? throw new InvalidOperationException("The desktop folder was not registered.");
-            if (path == existing.FullName || !File.Exists(Path.Combine(path, "Notes.lnk"))
-                || desktop.GetFiles("*.lnk").Length != 1
-                || !File.Exists(Path.Combine(path, "Docs.url"))
-                || !File.ReadAllText(Path.Combine(path, "desktop.ini")).Contains("IconResource=")
-                || Directory.GetFiles(path, "*.ico").Length != 2
-                || IconPresets.Image("office:Word") is null)
-                throw new InvalidOperationException("Explorer folder, shortcuts, or icons were not created.");
+            var desktop = fixture.CreateSubdirectory("سطح المكتب");
+            var data = fixture.CreateSubdirectory("Data");
+            var original = desktop.CreateSubdirectory("Games");
+            var duplicate = desktop.CreateSubdirectory("Games (2)");
+            var folder = new Folder { Name = "Games", ExplorerFolder = true };
+            var report = Path.Combine(duplicate.FullName, "Report.txt");
+            File.WriteAllText(report, "preserve me");
+            File.WriteAllText(Path.Combine(duplicate.FullName, ".desktopfolders-owner"), folder.Id.ToString("D"));
+            folder.Entries.Add(new Entry { Name = "Report", Target = report });
+            if (!FolderStorage.MigrateDesktopFolders(folder, desktop.FullName, data.FullName)
+                || !Directory.Exists(original.FullName) || Directory.Exists(duplicate.FullName)
+                || File.ReadAllText(folder.Entries[0].Target) != "preserve me"
+                || !FolderStorage.UserEntries(folder.Id, data.FullName, desktop.FullName).Any(entry => entry.Name == "Report.txt"))
+                throw new InvalidOperationException("Storage migration did not preserve the folder and its files.");
 
-            File.WriteAllText(Path.Combine(path, "Notes.lnk"), "user replacement");
-            File.WriteAllText(Path.Combine(path, "Report.txt"), "copied into the Windows folder");
-            var visible = ExplorerFolders.UserEntries(folder.Id, desktop.FullName);
-            if (!visible.Any(entry => entry.Name == "Report.txt") || visible.Any(entry => entry.Name == "Docs"))
-                throw new InvalidOperationException("The popup did not discover files copied into the Windows folder.");
-            folder.Entries.RemoveAt(1);
-            folder.Name = "Renamed";
-            folder.IconColor = "#4998F4";
-            var moved = ExplorerFolders.Sync(folder, desktop.FullName);
-            if (Directory.Exists(path) || Path.GetFileName(moved) != "Renamed"
-                || File.ReadAllText(Path.Combine(moved, "Notes.lnk")) != "user replacement"
-                || File.Exists(Path.Combine(moved, "Docs.url"))
-                || !File.Exists(Path.Combine(moved, "Notes (2).lnk")))
-                throw new InvalidOperationException("Explorer folder update did not preserve user files.");
-            ExplorerFolders.Detach(folder.Id, desktop.FullName);
-            if (ExplorerFolders.Find(folder.Id, desktop.FullName) is not null || !Directory.Exists(moved)
-                || !File.Exists(Path.Combine(moved, "Notes (2).lnk")))
-                throw new InvalidOperationException("Detaching did not preserve the Windows folder.");
+            var dragged = Path.Combine(desktop.FullName, "Dragged.txt");
+            File.WriteAllText(dragged, "move me");
+            if (FolderStorage.MoveFiles(folder, [dragged], () => false, data.FullName) || !File.Exists(dragged)
+                || folder.Entries.Count != 1)
+                throw new InvalidOperationException("A failed save did not restore the dragged file.");
+            if (!FolderStorage.MoveFiles(folder, [dragged], () => true, data.FullName) || File.Exists(dragged)
+                || File.ReadAllText(folder.Entries[1].Target) != "move me")
+                throw new InvalidOperationException("Dragging a file did not move it into storage.");
         }
-        finally
-        {
-            foreach (var directory in desktop.GetDirectories())
-            {
-                foreach (var file in directory.GetFiles())
-                {
-                    file.Attributes = FileAttributes.Normal;
-                    file.Delete();
-                }
-                directory.Attributes = FileAttributes.Directory;
-                directory.Delete();
-            }
-            foreach (var file in desktop.GetFiles()) file.Delete();
-            desktop.Delete();
-        }
+        finally { fixture.Delete(recursive: true); }
     }
 
     private static void CheckShortcutLifecycle()
@@ -222,14 +204,26 @@ public partial class App : Application
         try
         {
             var folder = new Folder { Name = "ألعاب" };
+            var old = Path.Combine(directory.FullName, "ألعاب [قديم].lnk");
+            var duplicate = Path.Combine(directory.FullName, "ألعاب.lnk");
+            var unmanaged = Path.Combine(directory.FullName, "احتفظ.lnk");
+            var arguments = $"--open {folder.Id:D}";
+            ShellShortcut.Save(old, Environment.ProcessPath!, arguments, "Desktop Folders");
+            ShellShortcut.Save(duplicate, Environment.ProcessPath!, arguments, AboutWindow.AppName);
+            ShellShortcut.Save(unmanaged, Environment.ProcessPath!, "--tray", AboutWindow.AppName);
+            folder.IconColor = "#7052A4";
             WindowsServices.SyncLink(folder, directory.FullName);
-            var initial = directory.GetFiles("*.lnk").Single();
+            var initial = directory.GetFiles("*.lnk").Single(file => file.FullName != unmanaged);
+            if (initial.FullName != duplicate || File.Exists(old)
+                || IconPresets.Icon("", folder.IconColor) is not { Length: > 22 })
+                throw new InvalidOperationException("Duplicate shortcuts or the Windows folder tint were not handled.");
             folder.Name = "ألعاب جديدة";
             WindowsServices.SyncLink(folder, directory.FullName);
-            var renamed = directory.GetFiles("*.lnk").Single();
+            var renamed = directory.GetFiles("*.lnk").Single(file => file.FullName != unmanaged);
             if (initial.Name == renamed.Name) throw new InvalidOperationException("Shortcut was not renamed.");
             WindowsServices.RemoveLinks(folder.Id, directory: directory.FullName);
-            if (directory.GetFiles("*.lnk").Length != 0) throw new InvalidOperationException("Shortcut was not removed.");
+            if (directory.GetFiles("*.lnk").Single().FullName != unmanaged)
+                throw new InvalidOperationException("Only the unrelated shortcut should remain.");
         }
         finally
         {
@@ -348,20 +342,25 @@ public partial class App : Application
                 return;
             if (!Data.Folders.Contains(folder)) return;
             IReadOnlyList<Entry> external = [];
-            if (folder.ExplorerFolder && !folder.Locked)
+            if (folder.ExplorerFolder)
             {
-                try { external = ExplorerFolders.UserEntries(folder.Id, WindowsServices.Desktop); }
-                catch (Exception error) { WindowsServices.Log("read-explorer-folder", error); }
+                try { external = FolderStorage.UserEntries(folder.Id); }
+                catch (Exception error) { WindowsServices.Log("read-folder-storage", error); }
             }
-            bool Add(string[] paths)
+            bool Add(string[] paths) => Data.Folders.Contains(folder) && ImportEntries(folder, paths, external, Save);
+            bool Move(string[] paths)
             {
-                if (!Data.Folders.Contains(folder) || !ImportEntries(folder, paths, external, Save)) return false;
-                if (folder.ExplorerFolder && !folder.Locked)
-                    TryShell(() => ExplorerFolders.Sync(folder, WindowsServices.Desktop));
-                return true;
+                if (!Data.Folders.Contains(folder)) return false;
+                try { return FolderStorage.MoveFiles(folder, paths, Save); }
+                catch (Exception error)
+                {
+                    WindowsServices.Log("move-files", error);
+                    MessageBox.Show(Words.Get("Windows could not move the selected files.", "تعذر على ويندوز نقل الملفات المحددة."));
+                    return false;
+                }
             }
-            if (dropped is { Length: > 0 }) Add(dropped);
-            popup = new PanelWindow(folder, Data, Launch, () => Save(), import: Add, externalEntries: external);
+            if (dropped is { Length: > 0 }) Move(dropped);
+            popup = new PanelWindow(folder, Data, Launch, () => Save(), import: Add, externalEntries: external, move: Move);
             popup.Closed += (_, _) => popup = null;
             popup.ShowNear(anchor);
         }
@@ -393,9 +392,17 @@ public partial class App : Application
             if (folder.Locked && !await Authorize()) return;
             var owner = manager;
             if (owner is not { IsVisible: true } || !Data.Folders.Contains(folder)) return;
-            var editor = new Editor(Store.Clone(folder), Data) { Owner = owner };
-            if (editor.ShowDialog() == true && owner.ViewModel.Apply(folder, editor.Draft))
-                TryShell(() => WindowsServices.SyncDesktop(editor.Draft));
+            var current = folder;
+            bool Commit(Folder draft)
+            {
+                var updated = Store.Clone(draft);
+                if (!owner.ViewModel.Apply(current, updated)) return false;
+                var updateShortcut = updated.Name != current.Name || updated.IconColor != current.IconColor;
+                current = updated;
+                if (updateShortcut) TryShell(() => WindowsServices.SyncLink(updated));
+                return true;
+            }
+            new Editor(Store.Clone(folder), Data, Commit) { Owner = owner }.ShowDialog();
         }
         finally { busy = false; }
     }

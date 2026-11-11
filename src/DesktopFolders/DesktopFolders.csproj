@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Product>Desktop Pop-up folder</Product>
     <Description>Desktop Pop-up folder</Description>
     <Copyright>© 2026 Mohammed-HG</Copyright>
@@ -18,5 +18,6 @@
     <ProjectReference Include="../DesktopFolders.Core/DesktopFolders.Core.csproj" />
     <Resource Include="Assets/folder.ico" />
     <Content Include="../../samples/Demo.json" Link="Demo.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

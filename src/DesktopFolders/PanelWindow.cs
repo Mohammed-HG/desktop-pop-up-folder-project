@@ -26,6 +26,7 @@ internal sealed class PanelWindow : Window
     private readonly Words words;
     private readonly bool animations;
     private readonly Func<string[], bool>? import;
+    private readonly Func<string[], bool>? move;
     private readonly IReadOnlyList<Entry> externalEntries;
     private readonly Border surface = new();
     private readonly ScaleTransform scale = new(1, 1);
@@ -41,7 +42,8 @@ internal sealed class PanelWindow : Window
     private string L(string en, string ar) => words.Get(en, ar);
 
     public PanelWindow(Folder folder, Preferences preferences, Action<Entry> launch, Action save, bool preview = false,
-        Func<string[], bool>? import = null, IReadOnlyList<Entry>? externalEntries = null)
+        Func<string[], bool>? import = null, IReadOnlyList<Entry>? externalEntries = null,
+        Func<string[], bool>? move = null)
     {
         this.folder = folder;
         settings = folder.Panel;
@@ -49,6 +51,7 @@ internal sealed class PanelWindow : Window
         this.save = save;
         this.preview = preview;
         this.import = import;
+        this.move = move;
         this.externalEntries = externalEntries ?? [];
         words = new(preferences.Arabic);
         animations = SystemParameters.ClientAreaAnimation && settings.Animation switch
@@ -71,19 +74,17 @@ internal sealed class PanelWindow : Window
             surface.RenderTransform = scale;
             surface.RenderTransformOrigin = new(0.5, 0.15);
             Content = surface;
-            AllowDrop = import is not null;
+            AllowDrop = move is not null;
             PreviewDragOver += (_, e) =>
             {
-                var supported = e.Data.GetDataPresent(DataFormats.FileDrop)
-                    || e.Data.GetDataPresent(DataFormats.UnicodeText);
-                e.Effects = supported && e.AllowedEffects.HasFlag(DragDropEffects.Copy)
-                    ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) && e.AllowedEffects.HasFlag(DragDropEffects.Move)
+                    ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
             };
             PreviewDrop += (_, e) =>
             {
-                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Copy) && Receive(e.Data)
-                    ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Move) && Receive(e.Data, moving: true)
+                    ? DragDropEffects.Move : DragDropEffects.None;
                 e.Handled = true;
             };
             Deactivated += (_, _) => { if (positioned && settings.OutsideClose) Dismiss(); };
@@ -155,8 +156,7 @@ internal sealed class PanelWindow : Window
         }
         if (settings.ShowCloseButton)
         {
-            var close = Ui.Button(Glyph.Close, L("Close", "إغلاق"), Dismiss);
-            close.Margin = new(0);
+            var close = Ui.CornerClose(L("Close", "إغلاق"), Dismiss, foreground);
             close.IsHitTestVisible = !preview;
             close.Focusable = !preview;
             Grid.SetColumn(close, 1);
@@ -206,8 +206,8 @@ internal sealed class PanelWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = grid };
         if (tiles.Count == 0)
         {
-            var empty = Ui.Text(L("Drag an app shortcut or file here, or press Ctrl+V to paste.",
-                "اسحب اختصار تطبيق أو ملفًا إلى هنا، أو اضغط Ctrl+V للصق."));
+            var empty = Ui.Text(L("Drag a file here to move it, or press Ctrl+V to add a link.",
+                "اسحب ملفًا إلى هنا لنقله، أو اضغط Ctrl+V لإضافة اختصار."));
             empty.Padding = new(8);
             empty.Foreground = foreground;
             content.Children.Add(new Border { Background = labelFill, CornerRadius = new(8),
@@ -314,13 +314,14 @@ internal sealed class PanelWindow : Window
         catch (ExternalException error) { WindowsServices.Log("paste-clipboard", error); }
     }
 
-    internal bool Receive(IDataObject data)
+    internal bool Receive(IDataObject data, bool moving = false)
     {
-        if (import is null || closing) return false;
+        var transfer = moving ? move : import;
+        if (transfer is null || closing) return false;
         var paths = data.GetData(DataFormats.FileDrop) as string[];
-        if (paths is null && data.GetData(DataFormats.UnicodeText) is string text)
+        if (!moving && paths is null && data.GetData(DataFormats.UnicodeText) is string text)
             paths = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        if (paths is null || !import(paths)) return false;
+        if (paths is null || !transfer(paths)) return false;
         ResetTimer();
         Refresh();
         if (tiles.Count != 0) tiles[^1].Focus();

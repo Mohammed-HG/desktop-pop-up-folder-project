@@ -25,8 +25,8 @@ internal static class Ui
     public static Brush Card => Brush(Dark ? "#2B2B2B" : "#FFFFFF");
     public static Color AccentColor => WindowsColor(UIColorType.Accent);
     public static Brush Accent => new SolidColorBrush(WindowsColor(Dark ? UIColorType.AccentLight2 : UIColorType.AccentDark2));
-    public static Color WindowsPanelColor => WindowsColor(UIColorType.Background);
-    public static Color WindowsPanelInk => WindowsColor(UIColorType.Foreground);
+    public static Color WindowsPanelColor => (Brush(WindowsDark ? "#202020" : "#F3F3F3")).Color;
+    public static Color WindowsPanelInk => (Brush(WindowsDark ? "#F4F4F5" : "#1B1B1F")).Color;
     public static SolidColorBrush Brush(string color) => new((Color)ColorConverter.ConvertFromString(color));
 
     public static void Configure(AppAppearance selected)
@@ -83,6 +83,35 @@ internal static class Ui
         return button;
     }
 
+    public static Button Ok(Action action)
+    {
+        var button = Button(Glyph.Check, "OK", action, true);
+        button.Content = "OK";
+        button.MinWidth = 68;
+        button.IsDefault = true;
+        return button;
+    }
+
+    public static Button CornerClose(string label, Action action, Brush foreground)
+    {
+        var button = Button(Glyph.Close, label, action);
+        button.Background = Brushes.Transparent;
+        button.Foreground = foreground;
+        button.BorderThickness = new(0);
+        button.MinWidth = button.MinHeight = 29;
+        button.Padding = new(5);
+        button.Margin = new(0);
+        var chrome = new FrameworkElementFactory(typeof(ContentPresenter));
+        chrome.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        chrome.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        var surface = new FrameworkElementFactory(typeof(Border));
+        // A single alpha level keeps the whole hit area clickable on a layered window.
+        surface.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)));
+        surface.AppendChild(chrome);
+        button.Template = new ControlTemplate(typeof(Button)) { VisualTree = surface };
+        return button;
+    }
+
     public static TextBlock Text(string value, double size = 14) => new()
     {
         Text = value, FontSize = size, TextWrapping = TextWrapping.Wrap
@@ -103,12 +132,8 @@ internal static class Ui
         field.Margin = new(0, 8, 0, 12);
         body.Children.Add(field);
         var buttons = new WrapPanel();
-        var ok = Button(Glyph.Check, words.Get("OK", "موافق"), () => { if (!string.IsNullOrWhiteSpace(field.Text)) dialog.DialogResult = true; }, true);
-        ok.IsDefault = true;
+        var ok = Ok(() => { if (!string.IsNullOrWhiteSpace(field.Text)) dialog.DialogResult = true; });
         buttons.Children.Add(ok);
-        var cancel = Button(Glyph.Close, words.Get("Cancel", "إلغاء"), () => dialog.DialogResult = false);
-        cancel.IsCancel = true;
-        buttons.Children.Add(cancel);
         body.Children.Add(buttons);
         dialog.Content = body;
         dialog.Loaded += (_, _) => { field.Focus(); field.SelectAll(); };

@@ -83,6 +83,10 @@ internal sealed class Manager : Window
         {
             if (Selected is { } folder) app.TryShell(() => WindowsServices.SyncDesktop(folder));
         });
+        Add(Glyph.File, L("Open stored files", "فتح الملفات المخزنة"), () =>
+        {
+            if (Selected is { } folder) app.TryShell(() => FolderStorage.Open(folder.Id));
+        });
         folders.ContextMenu = menu;
         bottom.Children.Add(actions);
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -140,15 +144,13 @@ internal sealed class Manager : Window
 
     private void Delete()
     {
-        if (Selected is not { } folder || MessageBox.Show(this, folder.ExplorerFolder
-            ? L("Remove this folder from the manager? Its Windows folder and contents will stay on the desktop.",
-                "هل تريد إزالة المجلد من المدير؟ سيظل مجلد Windows ومحتوياته على سطح المكتب.")
-            : L("Delete this folder and its desktop shortcut?", "هل تريد حذف هذا المجلد واختصاره من سطح المكتب؟"),
+        if (Selected is not { } folder || MessageBox.Show(this,
+            L("Delete this popup and its desktop shortcut? Stored files will be kept.",
+                "هل تريد حذف المجلد المنبثق واختصاره؟ ستبقى الملفات المخزنة."),
             Title, MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         if (!ViewModel.Delete(folder)) return;
         app.TryShell(() =>
         {
-            if (folder.ExplorerFolder) ExplorerFolders.Detach(folder.Id, WindowsServices.Desktop);
             WindowsServices.RemoveLinks(folder.Id);
             WindowsServices.RemoveFolderIcons(folder.Id);
         });

@@ -10,8 +10,13 @@ internal static class ShellShortcut
 {
     private static readonly Guid ClassId = new("00021401-0000-0000-C000-000000000046");
 
-    public static bool IsManaged(string path, string arguments)
+    public static bool IsManaged(string path, string arguments) => LauncherArguments(path) == arguments;
+
+    public static bool IsFolderLauncher(string path) => LauncherArguments(path) is not null;
+
+    private static string? LauncherArguments(string path)
     {
+        if (!Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase)) return null;
         try
         {
             return WithLink(link =>
@@ -19,14 +24,17 @@ internal static class ShellShortcut
                 ((IPersistFile)link).Load(path, 0);
                 var buffer = new StringBuilder(512);
                 link.GetArguments(buffer, buffer.Capacity);
-                if (buffer.ToString() != arguments) return false;
+                var arguments = buffer.ToString();
+                if (!arguments.StartsWith("--open ", StringComparison.Ordinal) || !Guid.TryParse(arguments[7..], out var id))
+                    return null;
                 buffer.Clear();
                 link.GetDescription(buffer, buffer.Capacity);
-                return buffer.ToString() is "Desktop Folders" or AboutWindow.AppName;
+                return buffer.ToString() is "Desktop Folders" or AboutWindow.AppName ? $"--open {id:D}" : null;
             });
         }
-        catch (COMException) { return false; }
-        catch (IOException) { return false; }
+        catch (COMException) { return null; }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     public static void Save(string path, string? target, string arguments = "", string? description = null,

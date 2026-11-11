@@ -15,6 +15,11 @@ internal sealed class SettingsWindow : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Build(app);
+    }
+
+    private void Build(App app)
+    {
         var words = app.Words;
         string L(string en, string ar) => words.Get(en, ar);
         Ui.SetWindow(this, words, L("Settings", "الإعدادات"));
@@ -41,19 +46,21 @@ internal sealed class SettingsWindow : Window
             IsChecked = WindowsServices.HasDesktopMenu() };
         controls.Children.Add(desktop);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var save = Ui.Button(Glyph.Check, L("Save settings", "حفظ الإعدادات"), () =>
-        {
-            if (app.ApplySettings((AppAppearance)theme.SelectedIndex, language.SelectedIndex == 1,
-                startup.IsChecked == true, desktop.IsChecked == true))
-                DialogResult = true;
-        }, true);
-        save.IsDefault = true;
-        actions.Children.Add(save);
-        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => DialogResult = false);
-        cancel.IsCancel = true;
-        actions.Children.Add(cancel);
+        actions.Children.Add(Ui.Ok(Close));
         body.Children.Add(actions);
         Content = body;
+        theme.SelectionChanged += (_, _) => Apply(refresh: true);
+        language.SelectionChanged += (_, _) => Apply(refresh: true);
+        startup.Click += (_, _) => Apply(refresh: false);
+        desktop.Click += (_, _) => Apply(refresh: false);
+
+        void Apply(bool refresh)
+        {
+            if (theme.SelectedIndex < 0 || language.SelectedIndex < 0) return;
+            var applied = app.ApplySettings((AppAppearance)theme.SelectedIndex, language.SelectedIndex == 1,
+                startup.IsChecked == true, desktop.IsChecked == true);
+            if (refresh || !applied) Dispatcher.BeginInvoke(() => { if (IsVisible) Build(app); });
+        }
 
         void Add(string label, FrameworkElement control)
         {

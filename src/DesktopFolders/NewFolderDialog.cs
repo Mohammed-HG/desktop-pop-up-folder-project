@@ -24,30 +24,20 @@ internal static class NewFolderDialog
         var showClose = new CheckBox { Content = L("Show the close icon", "إظهار علامة الإغلاق"), IsChecked = true, Margin = new(0, 4, 0, 12) };
         body.Children.Add(showClose);
         var folder = new Folder();
-        var color = new Image { Source = WindowsServices.WindowsFolderImage, Width = 32, Height = 32, Margin = new(0, 0, 8, 0) };
         var colorRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new(0, 0, 0, 10) };
-        colorRow.Children.Add(color);
         colorRow.Children.Add(Ui.Button(Glyph.Color, L("Folder icon color", "لون أيقونة المجلد"), () =>
-        {
-            if (IconPresets.PickColor(dialog, words, folder.IconColor) is not { } selected) return;
-            folder.IconColor = selected;
-            color.Source = IconPresets.FolderImage(folder);
-        }));
+            IconPresets.PickColor(dialog, words, folder.IconColor, selected => folder.IconColor = selected)));
         body.Children.Add(colorRow);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var create = Ui.Button(Glyph.Check, L("Create folder", "إنشاء المجلد"), () =>
+        var create = Ui.Ok(() =>
         {
             if (string.IsNullOrWhiteSpace(name.Text)) { name.Focus(); return; }
             folder.Name = name.Text.Trim();
             folder.Panel.Animation = (AnimationChoice)animations.SelectedIndex;
             folder.Panel.ShowCloseButton = showClose.IsChecked == true;
             dialog.DialogResult = true;
-        }, true);
-        create.IsDefault = true;
+        });
         actions.Children.Add(create);
-        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => dialog.DialogResult = false);
-        cancel.IsCancel = true;
-        actions.Children.Add(cancel);
         body.Children.Add(actions);
         dialog.Content = body;
         dialog.Loaded += (_, _) => { name.Focus(); name.SelectAll(); };

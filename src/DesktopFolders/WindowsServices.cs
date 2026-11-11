@@ -23,7 +23,6 @@ internal static class WindowsServices
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopFolders");
     private static string Executable => Environment.ProcessPath!;
     internal static string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-    private static string Suffix(Guid id) => $" [{id.ToString("N")[..8]}].lnk";
     private static string Arguments(Guid id) => $"--open {id:D}";
 
     public static void Log(string operation, Exception error)
@@ -71,8 +70,6 @@ internal static class WindowsServices
     public static void SyncDesktop(Folder folder, string? directory = null)
     {
         SyncLink(folder, directory);
-        if (folder.ExplorerFolder && !folder.Locked)
-            ExplorerFolders.Sync(folder, directory ?? Desktop);
     }
 
     public static void ForwardForeground(SafePipeHandle pipe)
@@ -94,66 +91,30 @@ internal static class WindowsServices
         return safe;
     }
 
-    internal static bool WriteEntryLink(Entry entry, string output, string directory)
-    {
-        var kind = Targets.Classify(entry.Target);
-        if (kind == TargetKind.Invalid || (kind == TargetKind.File && !File.Exists(entry.Target))) return false;
-        string? icon = null;
-        if (IconPresets.Icon(entry.Icon) is { } bytes)
-        {
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..16];
-            icon = Path.Combine(directory, $".desktopfolders-app-{hash}.ico");
-            if (!File.Exists(icon))
-            {
-                using var stream = new FileStream(icon, FileMode.CreateNew);
-                stream.Write(bytes);
-                File.SetAttributes(icon, FileAttributes.Hidden);
-            }
-        }
-        if (kind == TargetKind.Web)
-        {
-            var iconInfo = icon is null ? "" : $"IconFile={icon}\r\nIconIndex=0\r\n";
-            File.WriteAllText(output, $"[InternetShortcut]\r\nURL={new Uri(entry.Target).AbsoluteUri}\r\n{iconInfo}",
-                System.Text.Encoding.Unicode);
-            return true;
-        }
-        var extension = Path.GetExtension(entry.Target);
-        if (kind == TargetKind.File && extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
-        {
-            File.Copy(entry.Target, output);
-            File.SetAttributes(output, FileAttributes.Normal);
-            return true;
-        }
-        var copy = kind == TargetKind.File && extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
-        if (copy)
-        {
-            File.Copy(entry.Target, output);
-            File.SetAttributes(output, FileAttributes.Normal);
-            if (icon is null) return true;
-        }
-        var target = kind == TargetKind.AppsFolder
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")
-            : entry.Target;
-        ShellShortcut.Save(output, copy ? null : target,
-            kind == TargetKind.AppsFolder ? $"\"{entry.Target}\"" : "",
-            workingDirectory: Path.GetDirectoryName(target), icon: icon);
-        return true;
-    }
-
     public static void RemoveLinks(Guid id, string? keep = null, string? directory = null)
     {
-        foreach (var path in Directory.EnumerateFiles(directory ?? Desktop, "*" + Suffix(id)))
-            if (!string.Equals(path, keep, StringComparison.OrdinalIgnoreCase) && ShellShortcut.IsManaged(path, Arguments(id)))
+        foreach (var path in FindLinks(id, directory ?? Desktop))
+            if (!string.Equals(path, keep, StringComparison.OrdinalIgnoreCase))
                 File.Delete(path);
     }
+
+    private static IEnumerable<string> FindLinks(Guid id, string directory) =>
+        Directory.EnumerateFiles(directory, "*.lnk").Where(path => ShellShortcut.IsManaged(path, Arguments(id)));
 
     public static void SyncLink(Folder folder, string? directory = null)
     {
         var safe = SafeName(folder.Name, "Folder");
         var destination = directory ?? Desktop;
-        var path = Path.Combine(destination, safe + Suffix(folder.Id));
-        for (var n = 2; File.Exists(path) && !ShellShortcut.IsManaged(path, Arguments(folder.Id)); n++)
-            path = Path.Combine(destination, $"{safe} ({n})" + Suffix(folder.Id));
+        if (Directory.Exists(Path.Combine(destination, safe))) safe += " (Pop-up)";
+        var existing = FindLinks(folder.Id, destination).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var path = Path.Combine(destination, safe + ".lnk");
+        for (var n = 2; Directory.Exists(path) || (File.Exists(path) && !existing.Contains(path)); n++)
+            path = Path.Combine(destination, $"{safe} ({n}).lnk");
+        if (!File.Exists(path) && existing.FirstOrDefault() is { } previous)
+        {
+            File.Move(previous, path);
+            existing.Remove(previous);
+        }
         var iconPath = Executable;
         var iconIndex = 0;
         var stock = new StockIcon { Size = (uint)Marshal.SizeOf<StockIcon>() };
@@ -162,11 +123,11 @@ internal static class WindowsServices
             iconPath = stock.Path;
             iconIndex = stock.Index;
         }
-        if (!string.IsNullOrWhiteSpace(folder.Icon) || !string.IsNullOrWhiteSpace(folder.IconColor))
+        if (!string.IsNullOrWhiteSpace(folder.IconColor))
         {
             try
             {
-                if (IconPresets.Icon(folder.Icon, folder.IconColor) is { } bytes)
+                if (IconPresets.Icon("", folder.IconColor) is { } bytes)
                 {
                     var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..12];
                     var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}-{hash}.ico");
@@ -179,7 +140,9 @@ internal static class WindowsServices
         }
         ShellShortcut.Save(path, Executable, Arguments(folder.Id), AboutWindow.AppName,
             AppContext.BaseDirectory, iconPath, iconIndex);
-        RemoveLinks(folder.Id, path, destination);
+        foreach (var duplicate in existing)
+            if (!string.Equals(duplicate, path, StringComparison.OrdinalIgnoreCase))
+                File.Delete(duplicate);
         RemoveFolderIcons(folder.Id, iconPath, directory);
     }
 
