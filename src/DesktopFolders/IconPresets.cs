@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using DesktopFolders.Core;
 using D = System.Drawing;
 
 namespace DesktopFolders;
@@ -38,6 +39,23 @@ internal static class IconPresets
         var frame = BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
         frame.Freeze();
         return Images[preset.Name] = frame;
+    }
+
+    public static ImageSource FolderImage(Folder folder) => FolderImage(folder.IconColor, folder.Icon);
+
+    private static ImageSource FolderImage(string color, string icon = "")
+    {
+        try
+        {
+            if (Icon(icon, color) is not { } bytes) return WindowsServices.WindowsFolderImage;
+            using var stream = new MemoryStream(bytes);
+            return BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+        }
+        catch (Exception error)
+        {
+            WindowsServices.Log("folder-icon-preview", error);
+            return WindowsServices.WindowsFolderImage;
+        }
     }
 
     public static byte[]? Icon(string? icon, string? color = null)
@@ -104,11 +122,8 @@ internal static class IconPresets
         foreach (var preset in Office)
         {
             var key = "office:" + preset.Name;
-            var button = Ui.Button(preset.Name, () => { chosen = key; dialog.DialogResult = true; });
-            var content = new StackPanel();
-            content.Children.Add(new Image { Source = Image(key), Width = 30, Height = 30 });
-            content.Children.Add(new TextBlock { Text = preset.Name, HorizontalAlignment = HorizontalAlignment.Center });
-            button.Content = content;
+            var button = Ui.Button(Glyph.Apps, preset.Name, () => { chosen = key; dialog.DialogResult = true; });
+            button.Content = new Image { Source = Image(key), Width = 30, Height = 30 };
             System.Windows.Automation.AutomationProperties.SetName(button, preset.Name);
             tiles.Children.Add(button);
         }
@@ -122,9 +137,26 @@ internal static class IconPresets
         var dialog = new Window { Owner = owner, Width = 400, SizeToContent = SizeToContent.Height,
             ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         Ui.SetWindow(dialog, words, L("Folder icon color", "لون أيقونة المجلد"));
-        string? selected = null;
-        void Choose(string color) { selected = color; dialog.DialogResult = true; }
-        var body = new StackPanel { Margin = new(16) };
+        var body = new StackPanel { Margin = new(20) };
+        var title = Ui.Text(dialog.Title, 24);
+        title.FontWeight = FontWeights.SemiBold;
+        body.Children.Add(title);
+        var preview = new Image { Width = 70, Height = 70 };
+        body.Children.Add(new Border { Child = preview, Background = Ui.Card, Padding = new(12),
+            CornerRadius = new(12), Margin = new(0, 12, 0, 12) });
+        var useWindows = new RadioButton { Content = L("Windows default", "لون مجلد ويندوز"), GroupName = "FolderColor",
+            Margin = new(0, 0, 0, 6), IsChecked = !IsFolderColor(current) };
+        var useCustom = new RadioButton { Content = L("Custom color", "اختيار لون"), GroupName = "FolderColor",
+            IsChecked = IsFolderColor(current) };
+        body.Children.Add(useWindows);
+        body.Children.Add(useCustom);
+        var custom = new StackPanel { Margin = new(0, 8, 0, 0) };
+        body.Children.Add(custom);
+        var field = Ui.Field(IsFolderColor(current) ? current : "#F7BE3D");
+        field.FlowDirection = FlowDirection.LeftToRight;
+        field.MaxLength = 7;
+        field.Margin = new(0, 5, 0, 8);
+        System.Windows.Automation.AutomationProperties.SetName(field, L("Custom color (#RRGGBB)", "لون مخصص (‎#RRGGBB)"));
         var colors = new WrapPanel();
         (string Name, string Color)[] palette =
         [
@@ -135,24 +167,39 @@ internal static class IconPresets
         ];
         foreach (var (name, color) in palette)
         {
-            var button = Ui.Button(name, () => Choose(color));
-            button.Background = Ui.Brush(color);
+            var button = Ui.Button(Glyph.Color, name, () => field.Text = color);
+            button.Content = new System.Windows.Shapes.Ellipse { Fill = Ui.Brush(color), Width = 17, Height = 17 };
             colors.Children.Add(button);
         }
-        body.Children.Add(colors);
-        body.Children.Add(Ui.Text(L("Custom color (#RRGGBB)", "لون مخصص (‎#RRGGBB)")));
-        var field = Ui.Field(IsFolderColor(current) ? current : "#F7BE3D");
-        field.FlowDirection = FlowDirection.LeftToRight;
-        field.MaxLength = 7;
-        field.Margin = new(0, 5, 0, 8);
-        body.Children.Add(field);
-        var buttons = new WrapPanel();
-        buttons.Children.Add(Ui.Button(L("Use custom color", "استخدام اللون المخصص"), () =>
+        custom.Children.Add(colors);
+        custom.Children.Add(Ui.Text(L("Custom color (#RRGGBB)", "لون مخصص (‎#RRGGBB)")));
+        custom.Children.Add(field);
+        void Refresh()
         {
-            if (IsFolderColor(field.Text)) Choose(field.Text);
-            else MessageBox.Show(dialog, L("Enter a color in #RRGGBB format.", "أدخل لونًا بالتنسيق ‎#RRGGBB."));
-        }, true));
-        buttons.Children.Add(Ui.Button(L("Windows default", "الافتراضي في Windows"), () => Choose("")));
+            custom.IsEnabled = useCustom.IsChecked == true;
+            preview.Source = FolderImage(custom.IsEnabled && IsFolderColor(field.Text) ? field.Text : "");
+        }
+        useWindows.Checked += (_, _) => Refresh();
+        useCustom.Checked += (_, _) => Refresh();
+        field.TextChanged += (_, _) => Refresh();
+        Refresh();
+        string? selected = null;
+        var buttons = new WrapPanel();
+        var save = Ui.Button(Glyph.Check, L("Apply color", "تطبيق اللون"), () =>
+        {
+            if (useCustom.IsChecked == true && !IsFolderColor(field.Text))
+            {
+                field.Focus();
+                return;
+            }
+            selected = useCustom.IsChecked == true ? field.Text : "";
+            dialog.DialogResult = true;
+        }, true);
+        save.IsDefault = true;
+        buttons.Children.Add(save);
+        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => dialog.DialogResult = false);
+        cancel.IsCancel = true;
+        buttons.Children.Add(cancel);
         body.Children.Add(buttons);
         dialog.Content = body;
         return dialog.ShowDialog() == true ? selected : null;

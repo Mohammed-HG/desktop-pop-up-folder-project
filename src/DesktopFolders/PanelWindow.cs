@@ -55,7 +55,7 @@ internal sealed class PanelWindow : Window
         {
             AnimationChoice.On => true,
             AnimationChoice.Off => false,
-            _ => preferences.Animate
+            _ => true
         };
 
         if (!preview)
@@ -105,7 +105,8 @@ internal sealed class PanelWindow : Window
     public void Refresh()
     {
         settings.Normalize();
-        var fill = (Color)ColorConverter.ConvertFromString(settings.Background switch
+        var fill = settings.Background == Backdrop.Windows ? Ui.WindowsPanelColor :
+            (Color)ColorConverter.ConvertFromString(settings.Background switch
         {
             Backdrop.Light => "#F0F4FD",
             Backdrop.Dark => "#1C2437",
@@ -115,7 +116,8 @@ internal sealed class PanelWindow : Window
         if (settings.Background == Backdrop.Translucent) alpha *= .78;
         var luminance = .2126 * Linear(fill.R) + .7152 * Linear(fill.G) + .0722 * Linear(fill.B);
         var lightInk = luminance < .179;
-        var foreground = lightInk ? Brushes.White : Brushes.Black;
+        var foreground = settings.Background == Backdrop.Windows
+            ? new SolidColorBrush(Ui.WindowsPanelInk) : lightInk ? Brushes.White : Brushes.Black;
         var labelFill = alpha < .88 ? new SolidColorBrush(fill) : Brushes.Transparent;
         fill.A = (byte)Math.Round(255 * alpha);
         surface.Background = new SolidColorBrush(fill);
@@ -150,17 +152,15 @@ internal sealed class PanelWindow : Window
                 ClampCurrent();
                 RememberPosition();
             };
-            var tools = new StackPanel { Orientation = Orientation.Horizontal };
-            var pin = new ToggleButton { Content = "📌", IsChecked = !settings.OutsideClose, MinWidth = 32, Margin = new(0, 0, 4, 0),
-                ToolTip = L("Keep open while dragging from Explorer", "إبقاء المجلد مفتوحًا أثناء السحب من مستكشف الملفات") };
-            System.Windows.Automation.AutomationProperties.SetName(pin, (string)pin.ToolTip);
-            pin.Click += (_, _) => { settings.OutsideClose = pin.IsChecked != true; save(); };
-            tools.Children.Add(pin);
-            var close = Ui.Button(L("Close", "إغلاق"), Dismiss);
+        }
+        if (settings.ShowCloseButton)
+        {
+            var close = Ui.Button(Glyph.Close, L("Close", "إغلاق"), Dismiss);
             close.Margin = new(0);
-            tools.Children.Add(close);
-            Grid.SetColumn(tools, 1);
-            top.Children.Add(tools);
+            close.IsHitTestVisible = !preview;
+            close.Focusable = !preview;
+            Grid.SetColumn(close, 1);
+            top.Children.Add(close);
         }
         DockPanel.SetDock(top, Dock.Top);
         content.Children.Add(top);
@@ -189,17 +189,8 @@ internal sealed class PanelWindow : Window
                 settings.Normalize();
                 RememberPosition();
             };
-            var footer = new DockPanel { LastChildFill = false };
-            DockPanel.SetDock(resize, Dock.Right);
-            footer.Children.Add(resize);
-            if (import is not null)
-            {
-                var paste = Ui.Button(L("Paste", "لصق"), Paste);
-                paste.Margin = new(0);
-                footer.Children.Add(paste);
-            }
-            DockPanel.SetDock(footer, Dock.Bottom);
-            content.Children.Add(footer);
+            DockPanel.SetDock(resize, Dock.Bottom);
+            content.Children.Add(resize);
         }
 
         var grid = new UniformGrid { Columns = settings.Columns, VerticalAlignment = VerticalAlignment.Top,
@@ -265,7 +256,9 @@ internal sealed class PanelWindow : Window
         foreach (var property in new[] { IsMouseOverProperty, IsKeyboardFocusedProperty })
         {
             var trigger = new Trigger { Property = property, Value = true };
-            trigger.Setters.Add(new Setter(Border.BackgroundProperty, Ui.Brush("#506487B8"), "TileBorder"));
+            var accent = Ui.AccentColor;
+            trigger.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(Color.FromArgb(80, accent.R, accent.G, accent.B)), "TileBorder"));
             template.Triggers.Add(trigger);
         }
         button.Template = template;

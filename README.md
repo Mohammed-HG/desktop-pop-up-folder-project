@@ -1,6 +1,6 @@
 # Desktop Pop-up folder
 
-Desktop Pop-up folder 1.3 gives each folder a Windows desktop shortcut. Double-click the shortcut to open a floating grid and add apps or files by dragging them in or using Ctrl+V.
+Desktop Pop-up folder 1.4 gives each folder a Windows desktop shortcut, including on redirected desktops and paths with Arabic names. Double-click the shortcut to open a floating grid and add apps or files by dragging them in or using Ctrl+V.
 
 ## Application specifications
 
@@ -10,8 +10,8 @@ Desktop Pop-up folder 1.3 gives each folder a Windows desktop shortcut. Double-c
 | Folder management | Create popup folders from the desktop context menu or manager. Each gets a desktop shortcut, and an ordinary Explorer folder is optional. Rename, duplicate, reorder, and repair folders. Choose a preset color, a custom hex color, an Office icon, or an image. |
 | Shortcuts | Drag or paste app shortcuts, executables, documents, or other files into an open popup. Use the manager for installed AppsFolder entries, web addresses, and custom icons. Office-style icons include Word, Excel, PowerPoint, Outlook, OneNote, Access, Publisher, and Teams. |
 | Panel | Opens at the pointer or at its saved position. The window fits within the selected monitor’s work area and uses per-monitor DPI awareness. Set width from 240 to 1200 and height from 160 to 1000 device-independent pixels, subject to the monitor’s available space. Drag the panel title to move it and the corner grip to resize it. |
-| Layout and appearance | Choose 1–10 columns, icon size, spacing, padding, label visibility and size, and corner radius. The grid scrolls vertically. Light, dark, custom solid, and translucent backgrounds support 0–100% transparency. At 100% the backdrop is invisible and the icons and contrast labels remain interactive. Native acrylic and mica are outside this release. |
-| Motion | Opening and closing transitions and optional icon hover effects. Choose a duration up to 400 ms and use the global animation setting or a folder override. Windows reduced-motion preferences take precedence. Locked panels close immediately. |
+| Layout and appearance | Choose 1–10 columns, icon size, spacing, padding, labels, and corner radius. Set the app to light, dark, or follow Windows, with the Windows accent color on controls. Each popup can follow the Windows background and text colors or use its own appearance and transparency. |
+| Motion and dismissal | Choose animations when creating or editing a folder. Windows reduced-motion preferences take precedence. Show or hide the corner **×** per folder. Press Esc to close at any time. Locked panels close immediately. |
 | Lock | Existing popup folders support optional Windows Hello verification on Windows 11. Windows presents the configured PIN or biometric options. Normal Windows folders open directly in File Explorer. |
 | Language and input | English and Arabic with right-to-left layout. Navigate with Tab or arrow keys, press Enter to launch, and press Esc to close. Outside-click dismissal is configurable. |
 | Storage and privacy | Per-user JSON settings, atomic saves, one previous backup, and local diagnostic logs. The app needs no account or administrator privileges and has no telemetry. Links open in their registered Windows applications. |
@@ -20,15 +20,15 @@ Desktop Pop-up folder 1.3 gives each folder a Windows desktop shortcut. Double-c
 
 1. Run `DesktopFolders-Setup-win-x64.exe` and open **Desktop Pop-up folder** from Start. Setup installs for the current user. The installer is unsigned.
 2. For a portable install, extract the complete `DesktopFolders-win-x64.zip` to a permanent directory and run `DesktopFolders.exe` inside it. The runtime and `Demo.json` travel with the executable.
-3. Right-click a blank area of the desktop and choose **New Desktop Folder**. On Windows 11, look under **Show more options**. For a portable install, first enable **Desktop right-click command** in the manager. You can also use **New folder** or **Add demo folder** in the manager.
+3. Right-click a blank area of the desktop and choose **New Desktop Folder**. On Windows 11, look under **Show more options**. For a portable install, first enable **Desktop right-click command** under the gear icon in the manager. You can also use the **+** icon in the manager. Hover over an icon to see its action.
 4. Double-click the desktop shortcut for the folder. You can open it with the manager closed.
-5. Drag an app shortcut or a file from File Explorer or the desktop into the popup. You can also copy with **Ctrl+C**, open the popup, and press **Ctrl+V** or click **Paste**. These actions add links to the originals. The pin button keeps the popup open while you switch to Explorer.
-6. For colors and Office icons, select the folder in the manager and choose **Edit → Shortcuts**. Choose **Folder icon color** for presets or a custom `#RRGGBB` color. Select a shortcut and choose **Office icon**, or choose **Office folder icon** for the desktop icon. Choose **Save changes**.
-7. Use the editor’s **Appearance** tab for layout and transparency and **Behavior** for opening and closing settings. **About** in the manager or tray shows version 1.3, the copyright notice, and the separate GitHub profile and source links.
+5. Drag an app shortcut or a file from File Explorer or the desktop into the popup. You can also copy with **Ctrl+C**, open the popup, and press **Ctrl+V**. These actions add links to the originals.
+6. Use **Folder icon color** during creation or under **Edit → Shortcuts**. Choose the standard Windows folder color or select a custom color and preview the icon before saving. Office and image icons remain available in the editor.
+7. Use the editor’s **Appearance** tab for layout, transparency, and **Follow Windows**. Use **Behavior** for animations and the optional **×**. The manager’s top toolbar has a gear for **Settings** and an information icon for **About**. About shows version 1.4, the copyright notice, and separate GitHub profile and source links.
 
-When you first start version 1.3, it restores the desktop popup shortcut for folders created in version 1.1. Existing Explorer folders and files stay in place. You can also enable **Also create a normal Windows folder** under **Edit → Shortcuts**. Files pasted or dragged into that Explorer folder appear the next time you open its popup shortcut.
+When you start version 1.4, it restores missing desktop popup shortcuts, including on OneDrive desktops with localized paths. Existing Explorer folders and files stay in place. You can also enable **Also create a normal Windows folder** under **Edit → Shortcuts**. Files pasted or dragged into that Explorer folder appear the next time you open its popup shortcut.
 
-Double-click the tray icon to reopen the manager. Use **Repair desktop item** to recreate a missing desktop folder or shortcut. If you move the portable app, toggle **Desktop right-click command** off and on to update its path. Removing a normal folder from the manager leaves the Windows folder and its contents in place. To delete the directory itself, use File Explorer. Use **العربية** or **English** at the bottom of the manager to switch languages.
+Double-click the tray icon to reopen the manager. Use **Repair desktop item** to recreate a missing desktop folder or shortcut. **Settings** contains the startup option, desktop right-click command, language, and appearance. If you move the portable app, toggle **Desktop right-click command** off and on to update its path. Removing a normal folder from the manager leaves the Windows folder and its contents in place.
 
 ## Lock a folder with Windows Hello
 
@@ -52,7 +52,7 @@ winget install --id JRSoftware.InnoSetup --exact --source winget --scope user
 powershell -ExecutionPolicy Bypass -File .\scripts\Publish.ps1 -Installer
 ```
 
-The publish script runs the Windows smoke test against the self-contained executable and writes the executable directory, portable ZIP, and optional installer to `artifacts`. Automated tests cover settings bounds, target classification, duplicate-free file import, folder operations, atomic persistence, and recovery. The smoke test covers Shell shortcut creation, Explorer folder and file discovery, file-drop data import, the version 1.3 About window, and Arabic and transparent popup rendering. Verify Windows Hello authentication, physical mixed-DPI placement, and Windows 10 behavior on representative machines.
+The publish script runs the Windows smoke test against the self-contained executable and writes the executable directory, portable ZIP, and optional installer to `artifacts`. Automated tests cover settings bounds, target classification, duplicate-free file import, folder operations, atomic persistence, and recovery. The smoke test covers Shell shortcuts with Arabic paths and filenames, Explorer folder discovery, file-drop import, dark Settings, the version 1.4 About window, and Arabic and transparent popup rendering. Verify Windows Hello authentication, physical mixed-DPI placement, and Windows 10 behavior on representative machines.
 
 ## Architecture and local data
 

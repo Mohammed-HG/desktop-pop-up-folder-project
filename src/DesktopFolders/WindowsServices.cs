@@ -25,7 +25,6 @@ internal static class WindowsServices
     internal static string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     private static string Suffix(Guid id) => $" [{id.ToString("N")[..8]}].lnk";
     private static string Arguments(Guid id) => $"--open {id:D}";
-    private static dynamic ScriptShell() => Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true)!)!;
 
     public static void Log(string operation, Exception error)
     {
@@ -125,7 +124,6 @@ internal static class WindowsServices
             File.SetAttributes(output, FileAttributes.Normal);
             return true;
         }
-        dynamic shell = ScriptShell();
         var copy = kind == TargetKind.File && extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
         if (copy)
         {
@@ -133,64 +131,64 @@ internal static class WindowsServices
             File.SetAttributes(output, FileAttributes.Normal);
             if (icon is null) return true;
         }
-        dynamic link = shell.CreateShortcut(output);
-        if (!copy)
-        {
-            link.TargetPath = kind == TargetKind.AppsFolder
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")
-                : entry.Target;
-            link.Arguments = kind == TargetKind.AppsFolder ? $"\"{entry.Target}\"" : "";
-            link.WorkingDirectory = Path.GetDirectoryName((string)link.TargetPath);
-        }
-        if (icon is not null) link.IconLocation = icon + ",0";
-        link.Save();
+        var target = kind == TargetKind.AppsFolder
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")
+            : entry.Target;
+        ShellShortcut.Save(output, copy ? null : target,
+            kind == TargetKind.AppsFolder ? $"\"{entry.Target}\"" : "",
+            workingDirectory: Path.GetDirectoryName(target), icon: icon);
         return true;
-    }
-
-    private static bool Owns(dynamic shell, string path, Guid id)
-    {
-        dynamic link = shell.CreateShortcut(path);
-        return (string)link.Arguments == Arguments(id)
-            && (string)link.Description is "Desktop Folders" or AboutWindow.AppName;
     }
 
     public static void RemoveLinks(Guid id, string? keep = null, string? directory = null)
     {
-        dynamic shell = ScriptShell();
         foreach (var path in Directory.EnumerateFiles(directory ?? Desktop, "*" + Suffix(id)))
-            if (!string.Equals(path, keep, StringComparison.OrdinalIgnoreCase) && Owns(shell, path, id))
+            if (!string.Equals(path, keep, StringComparison.OrdinalIgnoreCase) && ShellShortcut.IsManaged(path, Arguments(id)))
                 File.Delete(path);
     }
 
     public static void SyncLink(Folder folder, string? directory = null)
     {
         var safe = SafeName(folder.Name, "Folder");
-        dynamic shell = ScriptShell();
         var destination = directory ?? Desktop;
         var path = Path.Combine(destination, safe + Suffix(folder.Id));
-        for (var n = 2; File.Exists(path) && !Owns(shell, path, folder.Id); n++)
+        for (var n = 2; File.Exists(path) && !ShellShortcut.IsManaged(path, Arguments(folder.Id)); n++)
             path = Path.Combine(destination, $"{safe} ({n})" + Suffix(folder.Id));
-        dynamic link = shell.CreateShortcut(path);
-        link.TargetPath = Executable;
-        link.Arguments = Arguments(folder.Id);
-        link.Description = AboutWindow.AppName;
-        link.WorkingDirectory = AppContext.BaseDirectory;
-        link.IconLocation = Executable + ",0";
+        var iconPath = Executable;
+        var iconIndex = 0;
+        var stock = new StockIcon { Size = (uint)Marshal.SizeOf<StockIcon>() };
+        if (SHGetStockIconInfo(3, 0, ref stock) == 0 && !string.IsNullOrWhiteSpace(stock.Path))
+        {
+            iconPath = stock.Path;
+            iconIndex = stock.Index;
+        }
         if (!string.IsNullOrWhiteSpace(folder.Icon) || !string.IsNullOrWhiteSpace(folder.IconColor))
         {
             try
             {
                 if (IconPresets.Icon(folder.Icon, folder.IconColor) is { } bytes)
                 {
-                    var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}.ico");
-                    File.WriteAllBytes(icon, bytes);
-                    link.IconLocation = icon + ",0";
+                    var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..12];
+                    var icon = Path.Combine(directory ?? DataDirectory, $"{folder.Id:N}-{hash}.ico");
+                    if (!File.Exists(icon)) File.WriteAllBytes(icon, bytes);
+                    iconPath = icon;
+                    iconIndex = 0;
                 }
             }
             catch (Exception error) { Log("desktop-icon", error); }
         }
-        link.Save();
+        ShellShortcut.Save(path, Executable, Arguments(folder.Id), AboutWindow.AppName,
+            AppContext.BaseDirectory, iconPath, iconIndex);
         RemoveLinks(folder.Id, path, destination);
+        RemoveFolderIcons(folder.Id, iconPath, directory);
+    }
+
+    public static void RemoveFolderIcons(Guid id, string? keep = null, string? directory = null)
+    {
+        var storage = directory ?? DataDirectory;
+        if (!Directory.Exists(storage)) return;
+        foreach (var icon in Directory.EnumerateFiles(storage, $"{id:N}*.ico"))
+            if (!string.Equals(icon, keep, StringComparison.OrdinalIgnoreCase)) File.Delete(icon);
     }
 
     public static IReadOnlyList<Entry> InstalledApps()
@@ -228,6 +226,16 @@ internal static class WindowsServices
     }
 
     private static ImageSource? folderIcon;
+    public static ImageSource WindowsFolderImage
+    {
+        get
+        {
+            var stock = new StockIcon { Size = (uint)Marshal.SizeOf<StockIcon>() };
+            if (SHGetStockIconInfo(3, 0x100, ref stock) != 0 || stock.Handle == 0) return FolderIcon;
+            try { return Imaging.CreateBitmapSourceFromHIcon(stock.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions()); }
+            finally { DestroyIcon(stock.Handle); }
+        }
+    }
     public static ImageSource FolderIcon => folderIcon ??= LoadFolderIcon();
 
     private static ImageSource LoadFolderIcon()
@@ -289,6 +297,16 @@ internal static class WindowsServices
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(string name, nint context, out nint pidl, uint mask, out uint attributes);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StockIcon
+    {
+        public uint Size;
+        public nint Handle;
+        public int ImageIndex;
+        public int Index;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Path;
+    }
+    [DllImport("shell32.dll")] private static extern int SHGetStockIconInfo(uint id, uint flags, ref StockIcon info);
     [DllImport("kernel32.dll")] private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(uint processId);
 }

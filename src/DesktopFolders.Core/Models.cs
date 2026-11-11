@@ -2,7 +2,8 @@ using System.Collections.ObjectModel;
 
 namespace DesktopFolders.Core;
 
-public enum Backdrop { Light, Dark, Custom, Translucent }
+public enum Backdrop { Light, Dark, Custom, Translucent, Windows }
+public enum AppAppearance { Windows, Light, Dark }
 public enum AnimationChoice { Default, On, Off }
 
 public sealed class Preferences
@@ -10,6 +11,7 @@ public sealed class Preferences
     public bool Arabic { get; set; }
     public bool Animate { get; set; } = true;
     public bool StartWithWindows { get; set; }
+    public AppAppearance Appearance { get; set; }
     public ObservableCollection<Folder> Folders { get; set; } = [];
 }
 
@@ -46,10 +48,11 @@ public sealed class PanelSettings
     public double FontSize { get; set; } = 12;
     public double Radius { get; set; } = 22;
     public bool Labels { get; set; } = true;
-    public Backdrop Background { get; set; }
+    public Backdrop Background { get; set; } = Backdrop.Windows;
     public string Color { get; set; } = "#30364C";
     public double Transparency { get; set; }
     public bool OutsideClose { get; set; }
+    public bool ShowCloseButton { get; set; } = true;
     public AnimationChoice Animation { get; set; }
     public bool Hover { get; set; } = true;
     public int Duration { get; set; } = 140;

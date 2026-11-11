@@ -9,13 +9,14 @@ public sealed class StoreTests
     public void PreservesFolderOrderAndIndependentSettings()
     {
         using var fixture = new Fixture();
-        var data = new Preferences { Arabic = true, Animate = false, StartWithWindows = true };
+        var data = new Preferences { Arabic = true, Animate = false, StartWithWindows = true, Appearance = AppAppearance.Dark };
         var folder = new Folder { Name = "عمل", Locked = true };
         folder.Entries.Add(new() { Name = "Docs", Target = "https://example.org/" });
         folder.Panel.Background = Backdrop.Translucent;
         folder.Panel.Transparency = 100;
         folder.Panel.RememberPosition = true;
         folder.Panel.X = -400;
+        folder.Panel.ShowCloseButton = false;
         var native = new Folder { Name = "Demo", ExplorerFolder = true, IconColor = "#72B755" };
         native.Entries.Add(new() { Name = "Notes", Icon = "office:Word" });
         data.Folders.Add(native);
@@ -26,13 +27,16 @@ public sealed class StoreTests
         var loaded = fixture.Store.Load();
         Assert.IsTrue(loaded.Arabic);
         Assert.IsTrue(loaded.StartWithWindows);
-        Assert.IsFalse(loaded.Animate);
+        Assert.AreEqual(AppAppearance.Dark, loaded.Appearance);
         Assert.AreEqual(folder.Id, loaded.Folders[0].Id);
         Assert.AreEqual("عمل", loaded.Folders[0].Name);
         Assert.IsTrue(loaded.Folders[0].Locked);
         Assert.AreEqual(-400, loaded.Folders[0].Panel.X);
         Assert.AreEqual(100d, loaded.Folders[0].Panel.Transparency);
         Assert.AreEqual(Backdrop.Translucent, loaded.Folders[0].Panel.Background);
+        Assert.AreEqual(AnimationChoice.Off, loaded.Folders[0].Panel.Animation);
+        Assert.IsFalse(loaded.Folders[0].Panel.ShowCloseButton);
+        Assert.AreEqual(Backdrop.Windows, loaded.Folders[1].Panel.Background);
         Assert.AreEqual("https://example.org/", loaded.Folders[0].Entries.Single().Target);
         Assert.AreEqual(0d, loaded.Folders[1].Panel.Transparency);
         Assert.IsFalse(loaded.Folders[0].ExplorerFolder);

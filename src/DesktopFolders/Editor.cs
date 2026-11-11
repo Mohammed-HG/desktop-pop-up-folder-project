@@ -41,7 +41,7 @@ internal sealed class Editor : Window
 
         var root = new DockPanel { Margin = new(18) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 10, 0, 0) };
-        var apply = Ui.Button(L("Save changes", "حفظ التغييرات"), async () =>
+        var apply = Ui.Button(Glyph.Check, L("Save changes", "حفظ التغييرات"), async () =>
         {
             if (verifying) return;
             if (Draft.ExplorerFolder && Draft.Locked)
@@ -65,7 +65,7 @@ internal sealed class Editor : Window
             DialogResult = true;
         }, true);
         actions.Children.Add(apply);
-        var cancel = Ui.Button(L("Cancel", "إلغاء"), () => DialogResult = false);
+        var cancel = Ui.Button(Glyph.Close, L("Cancel", "إلغاء"), () => DialogResult = false);
         cancel.IsCancel = true;
         actions.Children.Add(cancel);
         DockPanel.SetDock(actions, Dock.Bottom);
@@ -87,8 +87,7 @@ internal sealed class Editor : Window
         previewLayout.Children.Add(heading);
         previewLayout.Children.Add(new Border
         {
-            Background = new LinearGradientBrush((Color)ColorConverter.ConvertFromString("#8CAFF4"),
-                (Color)ColorConverter.ConvertFromString("#D5A5C3"), 45),
+            Background = Ui.Card,
             CornerRadius = new(16), Padding = new(12),
             Child = new Viewbox { StretchDirection = StretchDirection.DownOnly, Child = preview.Preview }
         });
@@ -130,36 +129,45 @@ internal sealed class Editor : Window
         native.ToolTip = L("Also creates a normal Windows folder for files. The popup shortcut remains on the desktop.",
             "ينشئ أيضًا مجلد Windows عاديًا للملفات. يبقى اختصار النافذة المنبثقة على سطح المكتب.");
         var icons = new WrapPanel();
-        icons.Children.Add(Ui.Button(L("Folder icon color", "لون أيقونة المجلد"), () =>
+        var folderImage = new Image { Source = IconPresets.FolderImage(Draft), Width = 32, Height = 32,
+            Margin = new(0, 0, 8, 6) };
+        icons.Children.Add(folderImage);
+        icons.Children.Add(Ui.Button(Glyph.Color, L("Folder icon color", "لون أيقونة المجلد"), () =>
         {
             if (IconPresets.PickColor(this, words, Draft.IconColor) is not { } color) return;
             Draft.Icon = "";
             Draft.IconColor = color;
+            folderImage.Source = IconPresets.FolderImage(Draft);
         }));
-        icons.Children.Add(Ui.Button(L("Office folder icon", "أيقونة Office للمجلد"), () =>
+        icons.Children.Add(Ui.Button(Glyph.Apps, L("Office folder icon", "أيقونة Office للمجلد"), () =>
         {
-            if (IconPresets.Pick(this, words) is { } icon) Draft.Icon = icon;
+            if (IconPresets.Pick(this, words) is not { } icon) return;
+            Draft.Icon = icon;
+            folderImage.Source = IconPresets.FolderImage(Draft);
         }));
-        icons.Children.Add(Ui.Button(L("Choose folder icon", "اختيار أيقونة المجلد"), () =>
+        icons.Children.Add(Ui.Button(Glyph.Image, L("Choose folder icon", "اختيار أيقونة المجلد"), () =>
         {
-            if (PickImage() is { } image) Draft.Icon = image;
+            if (PickImage() is not { } image) return;
+            Draft.Icon = image;
+            folderImage.Source = IconPresets.FolderImage(Draft);
         }));
-        icons.Children.Add(Ui.Button(L("Reset folder icon", "إعادة ضبط أيقونة المجلد"), () =>
+        icons.Children.Add(Ui.Button(Glyph.Repair, L("Reset folder icon", "إعادة ضبط أيقونة المجلد"), () =>
         {
             Draft.Icon = "";
             Draft.IconColor = "";
+            folderImage.Source = IconPresets.FolderImage(Draft);
         }));
         body.Children.Add(icons);
 
         var add = new WrapPanel { Margin = new(0, 9, 0, 0) };
-        add.Children.Add(Ui.Button(L("Add files", "إضافة ملفات"), () =>
+        add.Children.Add(Ui.Button(Glyph.File, L("Add files", "إضافة ملفات"), () =>
         {
             var picker = new OpenFileDialog { Multiselect = true,
                 Filter = L("All files (*.*)|*.*", "كل الملفات (*.*)|*.*") };
             if (picker.ShowDialog(this) == true) AddFiles(picker.FileNames);
         }));
-        add.Children.Add(Ui.Button(L("Installed apps", "التطبيقات المثبتة"), ChooseApp));
-        add.Children.Add(Ui.Button(L("Add URL", "إضافة رابط"), () =>
+        add.Children.Add(Ui.Button(Glyph.Apps, L("Installed apps", "التطبيقات المثبتة"), ChooseApp));
+        add.Children.Add(Ui.Button(Glyph.Link, L("Add URL", "إضافة رابط"), () =>
         {
             var url = Ui.Prompt(this, words, L("Enter an HTTP or HTTPS URL", "أدخل رابط HTTP أو HTTPS"), "https://");
             if (url is null) return;
@@ -203,7 +211,7 @@ internal sealed class Editor : Window
         };
         body.Children.Add(entries);
         var manage = new WrapPanel { Margin = new(0, 9, 0, 0) };
-        manage.Children.Add(Ui.Button(L("Rename shortcut", "إعادة تسمية الاختصار"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Edit, L("Rename shortcut", "إعادة تسمية الاختصار"), () =>
         {
             if (entries.SelectedItem is Entry entry && Ui.Prompt(this, words,
                 L("Shortcut label", "اسم الاختصار"), entry.Name) is { } label)
@@ -213,7 +221,7 @@ internal sealed class Editor : Window
                 UpdatePreview();
             }
         }));
-        manage.Children.Add(Ui.Button(L("Change target", "تغيير الوجهة"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Link, L("Change target", "تغيير الوجهة"), () =>
         {
             if (entries.SelectedItem is not Entry entry) return;
             var target = Ui.Prompt(this, words, L("Shortcut path or URL", "مسار الاختصار أو الرابط"), entry.Target);
@@ -226,11 +234,11 @@ internal sealed class Editor : Window
             entry.Target = target;
             UpdatePreview();
         }));
-        manage.Children.Add(Ui.Button(L("Custom icon", "أيقونة مخصصة"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Image, L("Custom icon", "أيقونة مخصصة"), () =>
         {
             if (entries.SelectedItem is Entry entry && PickImage() is { } image) { entry.Icon = image; UpdatePreview(); }
         }));
-        manage.Children.Add(Ui.Button(L("Office icon", "أيقونة Office"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Apps, L("Office icon", "أيقونة Office"), () =>
         {
             if (entries.SelectedItem is Entry entry && IconPresets.Pick(this, words) is { } icon)
             {
@@ -238,19 +246,19 @@ internal sealed class Editor : Window
                 UpdatePreview();
             }
         }));
-        manage.Children.Add(Ui.Button(L("Reset icon", "إعادة ضبط الأيقونة"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Repair, L("Reset icon", "إعادة ضبط الأيقونة"), () =>
         {
             if (entries.SelectedItem is Entry entry) { entry.Icon = ""; UpdatePreview(); }
         }));
-        manage.Children.Add(Ui.Button(L("Remove", "إزالة"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Delete, L("Remove", "إزالة"), () =>
         {
             if (entries.SelectedItem is Entry entry) { Draft.Entries.Remove(entry); UpdatePreview(); }
         }));
-        manage.Children.Add(Ui.Button(L("Move up", "نقل لأعلى"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Up, L("Move up", "نقل لأعلى"), () =>
         {
             if (entries.SelectedItem is Entry entry) Move(entry, entries.SelectedIndex - 1);
         }));
-        manage.Children.Add(Ui.Button(L("Move down", "نقل لأسفل"), () =>
+        manage.Children.Add(Ui.Button(Glyph.Down, L("Move down", "نقل لأسفل"), () =>
         {
             if (entries.SelectedItem is Entry entry) Move(entry, entries.SelectedIndex + 1);
         }));
@@ -314,7 +322,7 @@ internal sealed class Editor : Window
         DockPanel.SetDock(search, Dock.Top);
         content.Children.Add(search);
         var list = new ListBox { ItemsSource = apps, DisplayMemberPath = nameof(Entry.Name) };
-        var choose = Ui.Button(L("Add selected app", "إضافة التطبيق المحدد"), () =>
+        var choose = Ui.Button(Glyph.Check, L("Add selected app", "إضافة التطبيق المحدد"), () =>
         {
             if (list.SelectedItem is Entry entry)
             {
@@ -351,7 +359,8 @@ internal sealed class Editor : Window
         Check(body, L("Show labels", "إظهار الأسماء"), Panel.Labels, value => Panel.Labels = value);
         Slider(body, L("Label font size", "حجم خط الأسماء"), Panel.FontSize, 9, 24, value => Panel.FontSize = value);
         Choices(body, L("Background", "الخلفية"), [
-            L("Light", "فاتحة"), L("Dark", "داكنة"), L("Custom solid", "لون مخصص مصمت"), L("Translucent", "شبه شفافة")],
+            L("Light", "فاتحة"), L("Dark", "داكنة"), L("Custom solid", "لون مخصص مصمت"), L("Translucent", "شبه شفافة"),
+            L("Follow Windows", "مظهر ويندوز الحالي")],
             (int)Panel.Background, value => Panel.Background = (Backdrop)value);
         var color = Ui.Field(Panel.Color);
         color.FlowDirection = FlowDirection.LeftToRight;
@@ -370,12 +379,13 @@ internal sealed class Editor : Window
     {
         var body = new StackPanel { Margin = new(10) };
         Check(body, L("Close when clicking outside", "الإغلاق عند النقر خارج اللوحة"), Panel.OutsideClose, value => Panel.OutsideClose = value);
+        Check(body, L("Show the close icon", "إظهار علامة الإغلاق"), Panel.ShowCloseButton, value => Panel.ShowCloseButton = value);
         Check(body, L("Remember panel position", "تذكر موضع اللوحة"), Panel.RememberPosition, value =>
         {
             Panel.RememberPosition = value;
             if (!value) { Panel.X = null; Panel.Y = null; }
         });
-        Choices(body, L("Animations", "الحركات"), [L("Use global setting", "استخدام الإعداد العام"), L("On", "تشغيل"), L("Off", "إيقاف")],
+        Choices(body, L("Animations", "الحركات"), NewFolderDialog.AnimationLabels(words),
             (int)Panel.Animation, value => Panel.Animation = (AnimationChoice)value);
         Check(body, L("Animate icons on hover", "تحريك الأيقونات عند مرور المؤشر"), Panel.Hover, value => Panel.Hover = value);
         Number(body, L("Duration in ms (0–400)", "المدة بالمللي ثانية (0–400)"), Panel.Duration, 0, 400, value => Panel.Duration = (int)value);

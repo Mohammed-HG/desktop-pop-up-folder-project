@@ -42,20 +42,30 @@ internal sealed class Manager : Window
 
     private Folder? Selected => ViewModel.Selected;
 
-    private void Build()
+    internal void Build()
     {
+        var selected = Selected;
         Ui.SetWindow(this, Words, AboutWindow.AppName);
         var root = new DockPanel { Margin = new(24), LastChildFill = true };
         var header = new StackPanel { Margin = new(0, 0, 0, 16) };
         var title = Ui.Text(Title, 30);
         title.FontWeight = FontWeights.SemiBold;
-        header.Children.Add(title);
+        var heading = new DockPanel();
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        controls.Children.Add(Ui.Button(Glyph.Settings, L("Settings", "الإعدادات"), () =>
+            new SettingsWindow(this, app).ShowDialog()));
+        controls.Children.Add(Ui.Button(Glyph.Info, L("About", "حول التطبيق"), () =>
+            new AboutWindow(Words) { Owner = this }.ShowDialog()));
+        DockPanel.SetDock(controls, Dock.Right);
+        heading.Children.Add(controls);
+        heading.Children.Add(title);
+        header.Children.Add(heading);
         var hint = Ui.Text(L("Create folders for your Windows desktop and manage their shortcuts.", "أنشئ مجلدات على سطح مكتب Windows وأدر اختصاراتها."));
         hint.Foreground = Ui.Muted;
         header.Children.Add(hint);
         var create = new WrapPanel { Margin = new(0, 12, 0, 0) };
-        create.Children.Add(Ui.Button(L("New folder", "مجلد جديد"), () => Create(false), true));
-        create.Children.Add(Ui.Button(L("Add demo folder", "إضافة مجلد تجريبي"), () => Create(true)));
+        create.Children.Add(Ui.Button(Glyph.Add, L("New folder", "مجلد جديد"), () => Create(false), true));
+        create.Children.Add(Ui.Button(Glyph.Demo, L("Add demo folder", "إضافة مجلد تجريبي"), () => Create(true)));
         header.Children.Add(create);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
@@ -63,88 +73,38 @@ internal sealed class Manager : Window
         var bottom = new StackPanel { Margin = new(0, 12, 0, 0) };
         var actions = new WrapPanel();
         var menu = new ContextMenu { FlowDirection = Words.Direction };
-        Add(L("Open panel", "فتح اللوحة"), async () => { if (Selected is { } folder) await app.Open(folder); });
-        Add(L("Edit", "تعديل"), async () => { if (Selected is { } folder) await app.Edit(folder); });
-        Add(L("Duplicate", "تكرار"), Duplicate);
-        Add(L("Delete", "حذف"), Delete);
-        Add(L("Move up", "نقل لأعلى"), () => ViewModel.MoveSelection(-1));
-        Add(L("Move down", "نقل لأسفل"), () => ViewModel.MoveSelection(1));
-        Add(L("Repair desktop item", "إصلاح عنصر سطح المكتب"), () =>
+        Add(Glyph.Open, L("Open panel", "فتح اللوحة"), async () => { if (Selected is { } folder) await app.Open(folder); });
+        Add(Glyph.Edit, L("Edit", "تعديل"), async () => { if (Selected is { } folder) await app.Edit(folder); });
+        Add(Glyph.Copy, L("Duplicate", "تكرار"), Duplicate);
+        Add(Glyph.Delete, L("Delete", "حذف"), Delete);
+        Add(Glyph.Up, L("Move up", "نقل لأعلى"), () => ViewModel.MoveSelection(-1));
+        Add(Glyph.Down, L("Move down", "نقل لأسفل"), () => ViewModel.MoveSelection(1));
+        Add(Glyph.Repair, L("Repair desktop item", "إصلاح عنصر سطح المكتب"), () =>
         {
             if (Selected is { } folder) app.TryShell(() => WindowsServices.SyncDesktop(folder));
         });
         folders.ContextMenu = menu;
         bottom.Children.Add(actions);
-        var preferences = new WrapPanel { Margin = new(0, 8, 0, 0) };
-        var startup = Check(L("Start with Windows", "البدء مع Windows"), app.Data.StartWithWindows, value =>
-        {
-            var old = app.Data.StartWithWindows;
-            try
-            {
-                WindowsServices.SetStartup(value);
-                app.Data.StartWithWindows = value;
-                if (app.Save()) return;
-                WindowsServices.SetStartup(old);
-            }
-            catch (Exception error)
-            {
-                WindowsServices.Log("startup", error);
-                MessageBox.Show(this, L("Could not update Windows startup.", "تعذر تحديث إعداد بدء التشغيل."));
-            }
-            app.Data.StartWithWindows = old;
-            Build();
-        });
-        preferences.Children.Add(startup);
-        preferences.Children.Add(Check(L("Desktop right-click command", "أمر القائمة السياقية لسطح المكتب"),
-            WindowsServices.HasDesktopMenu(), value =>
-            {
-                app.TryShell(() => WindowsServices.SetDesktopMenu(value, Words));
-                Build();
-            }));
-        preferences.Children.Add(Check(L("Animations", "الحركات"), app.Data.Animate, value =>
-        {
-            app.Data.Animate = value;
-            if (!app.Save()) { app.Data.Animate = !value; Build(); }
-        }));
-        preferences.Children.Add(Ui.Button(L("العربية", "English"), () =>
-        {
-            app.Data.Arabic = !app.Data.Arabic;
-            if (!app.Save()) { app.Data.Arabic = !app.Data.Arabic; return; }
-            Build();
-            app.BuildTray();
-            if (WindowsServices.HasDesktopMenu()) app.TryShell(() => WindowsServices.SetDesktopMenu(true, Words));
-        }));
-        preferences.Children.Add(Ui.Button(L("About", "حول التطبيق"), () =>
-            new AboutWindow(Words) { Owner = this }.ShowDialog()));
-        bottom.Children.Add(preferences);
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
 
         if (folders.Parent is Panel parent) parent.Children.Remove(folders);
         root.Children.Add(folders);
         Content = root;
+        if (selected is not null) folders.SelectedItem = selected;
 
-        void Add(string name, Action run)
+        void Add(string glyph, string name, Action run)
         {
-            actions.Children.Add(Ui.Button(name, run));
-            var item = new MenuItem { Header = name };
+            actions.Children.Add(Ui.Button(glyph, name, run));
+            var item = new MenuItem { Header = name, Icon = Ui.Icon(glyph, 15) };
             item.Click += (_, _) => run();
             menu.Items.Add(item);
         }
     }
 
-    private static CheckBox Check(string name, bool value, Action<bool> set)
-    {
-        var box = new CheckBox { Content = name, IsChecked = value, Margin = new(0, 0, 14, 6), VerticalAlignment = VerticalAlignment.Center };
-        box.Click += (_, _) => set(box.IsChecked == true);
-        return box;
-    }
-
     private void Create(bool demo)
     {
-        var name = Ui.Prompt(this, Words, L("Folder name", "اسم المجلد"), demo ? L("Demo", "تجريبي") : "");
-        if (name is null) return;
-        var folder = new Folder { Name = name };
+        if (NewFolderDialog.Ask(this, Words, demo ? L("Demo", "تجريبي") : "") is not { } folder) return;
         if (demo)
         {
             try
@@ -190,7 +150,7 @@ internal sealed class Manager : Window
         {
             if (folder.ExplorerFolder) ExplorerFolders.Detach(folder.Id, WindowsServices.Desktop);
             WindowsServices.RemoveLinks(folder.Id);
-            File.Delete(Path.Combine(WindowsServices.DataDirectory, $"{folder.Id:N}.ico"));
+            WindowsServices.RemoveFolderIcons(folder.Id);
         });
     }
 }

@@ -32,7 +32,10 @@ public sealed class Store(string directory)
                 {
                     if (folder.Id == Guid.Empty || !ids.Add(folder.Id)) throw new JsonException();
                     folder.Panel.Normalize();
+                    if (!data.Animate && folder.Panel.Animation == AnimationChoice.Default)
+                        folder.Panel.Animation = AnimationChoice.Off;
                 }
+                data.Animate = true;
                 if (path != Pathname) Recovery = "backup";
                 return data;
             }

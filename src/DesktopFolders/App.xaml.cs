@@ -30,9 +30,9 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        if (e.Args is ["--smoke-ui"])
+        if (e.Args is ["--smoke-ui"] or ["--smoke-ui", "--check-desktop"])
         {
-            _ = RunSmokeTest();
+            _ = RunSmokeTest(e.Args.Length == 2);
             return;
         }
 
@@ -61,6 +61,8 @@ public partial class App : Application
         }
 
         Data = Store.Load();
+        Ui.Configure(Data.Appearance);
+        Ui.WindowsColors.ColorValuesChanged += OnSystemColorsChanged;
         if (e.Args is ["--uninstall"]) { Cleanup(); return; }
         _ = Task.Run(Listen);
         BuildTray();
@@ -85,10 +87,11 @@ public partial class App : Application
         Dispatch(e.Args);
     }
 
-    private async Task RunSmokeTest()
+    private async Task RunSmokeTest(bool checkDesktop)
     {
         try
         {
+            Ui.Configure(AppAppearance.Dark);
             var apps = WindowsServices.InstalledApps();
             if (apps.Count == 0) throw new InvalidOperationException("AppsFolder returned no launchable entries.");
             var folder = new Folder { Name = "تجريبي" };
@@ -97,10 +100,16 @@ public partial class App : Application
             folder.Entries.Add(new Entry { Name = "Notepad", Target = Path.Combine(Environment.SystemDirectory, "notepad.exe") });
             folder.Entries.Add(apps[0]);
             CheckShortcutLifecycle();
+            if (checkDesktop) CheckRedirectedDesktop();
             CheckExplorerFolders();
             var data = new Preferences { Arabic = true };
             var managerView = new Manager(this);
             managerView.Show();
+            var settings = new SettingsWindow(managerView, this);
+            settings.Show();
+            await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            if (settings.ActualHeight <= 0) throw new InvalidOperationException("Settings did not render.");
+            settings.Close();
             var editor = new Editor(folder, data) { Owner = managerView };
             editor.Show();
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
@@ -123,8 +132,8 @@ public partial class App : Application
             var about = new AboutWindow(new Words(false));
             about.Show();
             await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
-            if (AboutWindow.DisplayVersion != "1.3" || about.ActualHeight <= 0)
-                throw new InvalidOperationException("The About window did not render version 1.3.");
+            if (AboutWindow.DisplayVersion != "1.4" || about.ActualHeight <= 0)
+                throw new InvalidOperationException("The About window did not render version 1.4.");
             about.Close();
             Shutdown();
         }
@@ -133,6 +142,20 @@ public partial class App : Application
             Console.Error.WriteLine(error);
             Shutdown(1);
         }
+    }
+
+    private static void CheckRedirectedDesktop()
+    {
+        var id = Guid.NewGuid();
+        var path = Path.Combine(WindowsServices.Desktop, $"اختبار الاختصار {id:N}.lnk");
+        var arguments = $"--open {id:D}";
+        try
+        {
+            ShellShortcut.Save(path, Environment.ProcessPath!, arguments, AboutWindow.AppName, AppContext.BaseDirectory);
+            if (!File.Exists(path) || !ShellShortcut.IsManaged(path, arguments))
+                throw new InvalidOperationException("The Unicode shortcut could not be read from the redirected desktop.");
+        }
+        finally { File.Delete(path); }
     }
 
     private static void CheckExplorerFolders()
@@ -194,13 +217,14 @@ public partial class App : Application
 
     private static void CheckShortcutLifecycle()
     {
-        var directory = Directory.CreateTempSubdirectory("DesktopFolders.Smoke-");
+        var root = Directory.CreateTempSubdirectory("DesktopFolders.Smoke-");
+        var directory = root.CreateSubdirectory("سطح المكتب");
         try
         {
-            var folder = new Folder { Name = "First" };
+            var folder = new Folder { Name = "ألعاب" };
             WindowsServices.SyncLink(folder, directory.FullName);
             var initial = directory.GetFiles("*.lnk").Single();
-            folder.Name = "Renamed";
+            folder.Name = "ألعاب جديدة";
             WindowsServices.SyncLink(folder, directory.FullName);
             var renamed = directory.GetFiles("*.lnk").Single();
             if (initial.Name == renamed.Name) throw new InvalidOperationException("Shortcut was not renamed.");
@@ -211,6 +235,7 @@ public partial class App : Application
         {
             foreach (var file in directory.GetFiles()) file.Delete();
             directory.Delete();
+            root.Delete();
         }
     }
 
@@ -258,9 +283,7 @@ public partial class App : Application
         busy = true;
         try
         {
-            var name = Ui.Prompt(null, Words, Words.Get("New Desktop Folder", "مجلد سطح مكتب جديد"));
-            if (name is null) return;
-            var folder = new Folder { Name = name };
+            if (NewFolderDialog.Ask(null, Words) is not { } folder) return;
             var viewModel = manager?.ViewModel ?? new FolderManagerViewModel(Data, Save);
             if (viewModel.Add(folder)) TryShell(() => WindowsServices.SyncDesktop(folder));
         }
@@ -403,6 +426,49 @@ public partial class App : Application
         }
     }
 
+    internal bool ApplySettings(AppAppearance appearance, bool arabic, bool startup, bool desktopMenu)
+    {
+        var previous = (Data.Appearance, Data.Arabic, Data.StartWithWindows, DesktopMenu: WindowsServices.HasDesktopMenu());
+        var startupChanged = startup != previous.StartWithWindows;
+        var desktopChanged = desktopMenu != previous.DesktopMenu || (desktopMenu && arabic != previous.Arabic);
+        try
+        {
+            if (startupChanged) WindowsServices.SetStartup(startup);
+            if (desktopChanged) WindowsServices.SetDesktopMenu(desktopMenu, new Words(arabic));
+            Data.Appearance = appearance;
+            Data.Arabic = arabic;
+            Data.StartWithWindows = startup;
+            if (Save())
+            {
+                Ui.Configure(Data.Appearance);
+                manager?.Build();
+                popup?.DismissImmediately();
+                if (arabic != previous.Arabic) BuildTray();
+                return true;
+            }
+        }
+        catch (Exception error)
+        {
+            WindowsServices.Log("apply-settings", error);
+            MessageBox.Show(Words.Get("Could not apply the settings.", "تعذر تطبيق الإعدادات."));
+        }
+        Data.Appearance = previous.Appearance;
+        Data.Arabic = previous.Arabic;
+        Data.StartWithWindows = previous.StartWithWindows;
+        if (startupChanged) TryShell(() => WindowsServices.SetStartup(previous.StartWithWindows));
+        if (desktopChanged) TryShell(() => WindowsServices.SetDesktopMenu(previous.DesktopMenu, Words));
+        return false;
+    }
+
+    private void OnSystemColorsChanged(Windows.UI.ViewManagement.UISettings sender, object args)
+    {
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            manager?.Build();
+            popup?.Refresh();
+        });
+    }
+
     internal void TryShell(Action action)
     {
         try { action(); }
@@ -426,6 +492,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        if (ownsInstance) Ui.WindowsColors.ColorValuesChanged -= OnSystemColorsChanged;
         stop.Cancel();
         if (tray is not null) { tray.Visible = false; tray.Dispose(); }
         if (ownsInstance) instance?.ReleaseMutex();

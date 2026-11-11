@@ -5,7 +5,7 @@
 [Setup]
 AppId={{ECF0B355-85BB-43AD-BA8C-00F1337DFE65}
 AppName=Desktop Pop-up folder
-AppVersion=1.3
+AppVersion=1.4
 DefaultDirName={localappdata}\Programs\Desktop Folders
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible and not arm64
