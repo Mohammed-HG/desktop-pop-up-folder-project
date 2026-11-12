@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Pop-up folder
+Name[ar]=مجلد سطح المكتب المنبثق
+Exec=desktop-popup-folder
+Icon=desktop-popup-folder
+Terminal=false
+Categories=Utility;

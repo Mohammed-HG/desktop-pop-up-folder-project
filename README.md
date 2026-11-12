@@ -4,6 +4,8 @@ Desktop Pop-up folder 1.4_3 gives each folder a Windows desktop shortcut, includ
 
 [سجل التحديثات بالعربية](CHANGELOG.md)
 
+**Linux 1.2** is a separate Java edition in this repository with an installable Debian package and an executable JAR. [Linux setup and build instructions](linux/README.md)
+
 ## Application specifications
 
 | Area | Details |
