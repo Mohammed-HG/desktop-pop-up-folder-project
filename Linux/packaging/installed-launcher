@@ -1,0 +1,2 @@
+#!/bin/sh
+exec java -jar /usr/share/desktop-popup-folder/app.jar "$@"

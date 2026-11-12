@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec java -jar "$directory/desktop-popup-folder-linux-1.2.jar" "$@"
