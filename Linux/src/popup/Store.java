@@ -8,7 +8,11 @@ import java.util.*;
 
 final class Store {
     static final String OWNER = "X-DesktopPopupFolder-Id=";
-    record Folder(UUID id, String name, List<Path> files, int columns) {
+    record Appearance(int width, int height, int iconSize, boolean labels, boolean closeOutside,
+                      boolean closeButton, String theme, int transparency) {
+        static final Appearance DEFAULT = new Appearance(466, 365, 48, true, false, true, "System", 0);
+    }
+    record Folder(UUID id, String name, List<Path> files, int columns, Appearance appearance) {
         @Override public String toString() { return name; }
     }
     interface Change { void run(Folder folder) throws IOException; }
@@ -24,13 +28,39 @@ final class Store {
     Path storage(UUID id) { return root.resolve("files").resolve(id.toString()); }
     private Path config(UUID id) { return root.resolve(id + ".properties"); }
 
+    Properties settings() throws IOException {
+        var p = new Properties();
+        var path = root.resolve("settings");
+        if (Files.exists(path)) try (var in = Files.newBufferedReader(path)) { p.load(in); }
+        return p;
+    }
+
+    void settings(String theme, boolean arabic) throws IOException {
+        locked(() -> {
+            var p = new Properties();
+            p.setProperty("theme", theme);
+            p.setProperty("language", arabic ? "ar" : "en");
+            writeProperties(p, root.resolve("settings"));
+            return null;
+        });
+    }
+
     Folder load(UUID id) throws IOException {
         var p = new Properties();
         try (var in = Files.newBufferedReader(config(id))) { p.load(in); }
         var files = new ArrayList<Path>();
         for (int i = 0; p.containsKey("file." + i); i++) files.add(Path.of(p.getProperty("file." + i)));
-        return new Folder(id, p.getProperty("name"), files,
-            Math.max(1, Math.min(8, Integer.parseInt(p.getProperty("columns", "4")))));
+        return new Folder(id, p.getProperty("name"), files, number(p, "columns", 4, 1, 8),
+            new Appearance(number(p, "width", 466, 260, 1200), number(p, "height", 365, 220, 900),
+                number(p, "iconSize", 48, 24, 96), Boolean.parseBoolean(p.getProperty("labels", "true")),
+                Boolean.parseBoolean(p.getProperty("closeOutside", "false")),
+                Boolean.parseBoolean(p.getProperty("closeButton", "true")), p.getProperty("theme", "System"),
+                number(p, "transparency", 0, 0, 100)));
+    }
+
+    private static int number(Properties p, String key, int fallback, int min, int max) {
+        try { return Math.max(min, Math.min(max, Integer.parseInt(p.getProperty(key, Integer.toString(fallback))))); }
+        catch (NumberFormatException ignored) { return fallback; }
     }
 
     List<Folder> folders() throws IOException {
@@ -48,7 +78,7 @@ final class Store {
 
     Folder create(String name) throws IOException {
         return locked(() -> {
-            var folder = new Folder(UUID.randomUUID(), name.strip(), new ArrayList<>(), 4);
+            var folder = new Folder(UUID.randomUUID(), name.strip(), new ArrayList<>(), 4, Appearance.DEFAULT);
             launcher(folder);
             try { write(folder); }
             catch (IOException error) { removeLauncher(folder); throw error; }
@@ -57,9 +87,13 @@ final class Store {
     }
 
     Folder edit(UUID id, String name, int columns) throws IOException {
+        return edit(id, name, columns, load(id).appearance());
+    }
+
+    Folder edit(UUID id, String name, int columns, Appearance appearance) throws IOException {
         return locked(() -> {
             var old = load(id);
-            var updated = new Folder(id, name.strip(), old.files(), columns);
+            var updated = new Folder(id, name.strip(), old.files(), columns, appearance);
             launcher(updated);
             try { write(updated); }
             catch (IOException error) {
@@ -176,11 +210,24 @@ final class Store {
         var p = new Properties();
         p.setProperty("name", folder.name());
         p.setProperty("columns", Integer.toString(folder.columns()));
+        var a = folder.appearance();
+        p.setProperty("width", Integer.toString(a.width()));
+        p.setProperty("height", Integer.toString(a.height()));
+        p.setProperty("iconSize", Integer.toString(a.iconSize()));
+        p.setProperty("labels", Boolean.toString(a.labels()));
+        p.setProperty("closeOutside", Boolean.toString(a.closeOutside()));
+        p.setProperty("closeButton", Boolean.toString(a.closeButton()));
+        p.setProperty("theme", a.theme());
+        p.setProperty("transparency", Integer.toString(a.transparency()));
         for (int i = 0; i < folder.files().size(); i++) p.setProperty("file." + i, folder.files().get(i).toString());
+        writeProperties(p, config(folder.id()));
+    }
+
+    private void writeProperties(Properties p, Path destination) throws IOException {
         var temp = Files.createTempFile(root, ".folder-", ".tmp");
         try {
             try (var out = Files.newBufferedWriter(temp)) { p.store(out, null); }
-            replace(temp, config(folder.id()));
+            replace(temp, destination);
         } finally { Files.deleteIfExists(temp); }
     }
 

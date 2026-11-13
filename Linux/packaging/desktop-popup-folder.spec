@@ -1,5 +1,5 @@
 Name:           desktop-popup-folder
-Version:        1.2
+Version:        1.3
 Release:        1
 Summary:        Pop-up folders for the Linux desktop
 License:        LicenseRef-Unspecified
@@ -9,7 +9,7 @@ Requires:       xdg-utils
 Requires:       xdg-user-dirs
 Requires:       glib2
 
-Source0:        desktop-popup-folder-linux-1.2.jar
+Source0:        desktop-popup-folder-linux-1.3.jar
 Source1:        desktop-popup-folder.desktop
 Source2:        desktop-popup-folder.svg
 Source3:        installed-launcher

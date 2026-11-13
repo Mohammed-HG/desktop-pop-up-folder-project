@@ -2,7 +2,7 @@
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 output="$root/artifacts"
-version=1.2
+version=1.3
 archive="$output/desktop-popup-folder-linux-$version.jar"
 format=all
 reuse=0
