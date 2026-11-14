@@ -9,7 +9,16 @@ import java.util.*;
 final class Store {
     static final String OWNER = "X-DesktopPopupFolder-Id=";
     record Appearance(int width, int height, int iconSize, boolean labels, boolean closeOutside,
-                      boolean closeButton, String theme, int transparency) {
+                      boolean closeButton, String theme, int transparency, String color, String symbol,
+                      int spacing, boolean hover) {
+        Appearance(int width, int height, int iconSize, boolean labels, boolean closeOutside,
+                   boolean closeButton, String theme, int transparency) {
+            this(width, height, iconSize, labels, closeOutside, closeButton, theme, transparency, "#4293ee", "", 8, true);
+        }
+        Appearance resized(int width, int height) {
+            return new Appearance(width, height, iconSize, labels, closeOutside, closeButton,
+                theme, transparency, color, symbol, spacing, hover);
+        }
         static final Appearance DEFAULT = new Appearance(466, 365, 48, true, false, true, "System", 0);
     }
     record Folder(UUID id, String name, List<Path> files, int columns, Appearance appearance) {
@@ -55,7 +64,9 @@ final class Store {
                 number(p, "iconSize", 48, 24, 96), Boolean.parseBoolean(p.getProperty("labels", "true")),
                 Boolean.parseBoolean(p.getProperty("closeOutside", "false")),
                 Boolean.parseBoolean(p.getProperty("closeButton", "true")), p.getProperty("theme", "System"),
-                number(p, "transparency", 0, 0, 100)));
+                number(p, "transparency", 0, 0, 100), p.getProperty("color", "#4293ee"),
+                p.getProperty("symbol", ""), number(p, "spacing", 8, 0, 24),
+                Boolean.parseBoolean(p.getProperty("hover", "true"))));
     }
 
     private static int number(Properties p, String key, int fallback, int min, int max) {
@@ -77,8 +88,12 @@ final class Store {
     }
 
     Folder create(String name) throws IOException {
+        return create(name, 4, Appearance.DEFAULT, List.of());
+    }
+
+    Folder create(String name, int columns, Appearance appearance, List<Path> files) throws IOException {
         return locked(() -> {
-            var folder = new Folder(UUID.randomUUID(), name.strip(), new ArrayList<>(), 4, Appearance.DEFAULT);
+            var folder = new Folder(UUID.randomUUID(), name.strip(), new ArrayList<>(files), columns, appearance);
             launcher(folder);
             try { write(folder); }
             catch (IOException error) { removeLauncher(folder); throw error; }
@@ -91,9 +106,13 @@ final class Store {
     }
 
     Folder edit(UUID id, String name, int columns, Appearance appearance) throws IOException {
+        return edit(id, name, columns, appearance, null);
+    }
+
+    Folder edit(UUID id, String name, int columns, Appearance appearance, List<Path> files) throws IOException {
         return locked(() -> {
             var old = load(id);
-            var updated = new Folder(id, name.strip(), old.files(), columns, appearance);
+            var updated = new Folder(id, name.strip(), files == null ? old.files() : new ArrayList<>(files), columns, appearance);
             launcher(updated);
             try { write(updated); }
             catch (IOException error) {
@@ -168,8 +187,10 @@ final class Store {
         var path = shortcut(folder);
         if (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && !owned(path, folder.id()))
             throw new IOException("A desktop shortcut with that name already exists.");
-        var icon = root.resolve("folder.png");
-        if (!Files.exists(icon)) javax.imageio.ImageIO.write(App.folderIcon(128), "png", icon.toFile());
+        var icons = Files.createDirectories(root.resolve("icons"));
+        var icon = icons.resolve(folder.id() + "-" + Integer.toUnsignedString(
+            Objects.hash(folder.appearance().color(), folder.appearance().symbol())) + ".png");
+        if (!Files.exists(icon)) javax.imageio.ImageIO.write(App.folderIcon(256, folder.appearance()), "png", icon.toFile());
         var content = "[Desktop Entry]\nType=Application\nName=" + value(folder.name()) +
             "\nExec=" + command + " --open " + folder.id() + "\nIcon=" + value(icon.toString()) +
             "\nTerminal=false\n" + OWNER + folder.id() + "\n";
@@ -219,6 +240,10 @@ final class Store {
         p.setProperty("closeButton", Boolean.toString(a.closeButton()));
         p.setProperty("theme", a.theme());
         p.setProperty("transparency", Integer.toString(a.transparency()));
+        p.setProperty("color", a.color());
+        p.setProperty("symbol", a.symbol());
+        p.setProperty("spacing", Integer.toString(a.spacing()));
+        p.setProperty("hover", Boolean.toString(a.hover()));
         for (int i = 0; i < folder.files().size(); i++) p.setProperty("file." + i, folder.files().get(i).toString());
         writeProperties(p, config(folder.id()));
     }

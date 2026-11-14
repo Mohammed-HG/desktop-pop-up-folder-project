@@ -1,7 +1,6 @@
 package popup;
 
 import javax.swing.*;
-import javax.swing.filechooser.FileSystemView;
 import java.awt.*;
 import java.awt.datatransfer.*;
 import java.awt.event.*;
@@ -13,7 +12,7 @@ import java.util.List;
 
 public final class App {
     static final String NAME = "Desktop Pop-up folder";
-    static final String VERSION = "1.3";
+    static final String VERSION = "1.4";
     static final Color BACKGROUND = new Color(31, 36, 48);
     private final Store store;
     private boolean arabic;
@@ -55,6 +54,7 @@ public final class App {
             System.exit(1);
         }
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
         var jar = Path.of(App.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();
         var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         var home = Path.of(System.getProperty("user.home"));
@@ -65,12 +65,31 @@ public final class App {
             var fixture = Files.createTempDirectory("popup-linux-ui-");
             var store = new Store(fixture.resolve("data"), fixture.resolve("desktop"), "desktop-popup-folder");
             var folder = store.create("UI test");
+            var icon = fixture.resolve("test.png");
+            javax.imageio.ImageIO.write(folderIcon(128), "png", icon.toFile());
+            for (int i = 0; i < 9; i++) {
+                var item = fixture.resolve("Test " + i + ".desktop");
+                Files.writeString(item, "[Desktop Entry]\nType=Application\nName=Test\nExec=true\nIcon=" + icon + "\n");
+                folder.files().add(item);
+            }
             var testApp = new App(store);
             SwingUtilities.invokeLater(() -> {
-                testApp.open(folder);
+                var popup = testApp.new Popup(folder);
+                popup.show();
+                var firstTile = (JButton)popup.grid.getComponent(0);
+                boolean[] activated = {false};
+                for (var listener : firstTile.getActionListeners()) firstTile.removeActionListener(listener);
+                firstTile.addActionListener(e -> activated[0] = true);
+                popup.frame.setSize(740, 440);
                 var stop = new javax.swing.Timer(650, event -> {
+                    firstTile.doClick(0);
+                    boolean passed = popup.frame.isShowing() && activated[0]
+                        && popup.grid.getComponent(0) == firstTile && firstTile.getWidth() > 0
+                        && firstTile.getIcon() != null && firstTile.getIcon().getIconWidth() == 48;
+                    popup.frame.dispose();
                     try { deleteFixture(fixture); } catch (IOException e) { throw new UncheckedIOException(e); }
-                    System.out.println("Linux popup rendered");
+                    if (!passed) System.exit(1);
+                    System.out.println("Linux popup rendered icons and retained clickable tiles after resize");
                     System.exit(0);
                 });
                 stop.setRepeats(false);
@@ -121,8 +140,8 @@ public final class App {
         actions.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
         var create = new JPanel(new FlowLayout(FlowLayout.LEADING));
         create.add(button("+", l("New folder", "مجلد جديد"), () -> run(frame, () -> {
-            var name = JOptionPane.showInputDialog(frame, l("Folder name", "اسم المجلد"));
-            if (name != null) { var folder = store.create(name); reload.run(); list.setSelectedValue(folder, true); }
+            var folder = edit(frame, null);
+            if (folder != null) { reload.run(); list.setSelectedValue(folder, true); }
         })));
         actions.add(button("↗", l("Open", "فتح"), () -> { if (list.getSelectedValue() != null) open(list.getSelectedValue()); }));
         actions.add(button("✎", l("Edit", "تعديل"), () -> run(frame, () -> {
@@ -170,7 +189,7 @@ public final class App {
         list.setCellRenderer(new DefaultListCellRenderer() {
             @Override public Component getListCellRendererComponent(JList<?> source, Object value, int index, boolean selected, boolean focus) {
                 super.getListCellRendererComponent(source, value, index, selected, focus);
-                setIcon(new ImageIcon(folderIcon(24)));
+                if (value instanceof Store.Folder folder) setIcon(new ImageIcon(folderIcon(24, folder.appearance())));
                 setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
                 return this;
             }
@@ -188,15 +207,50 @@ public final class App {
         var language = new JComboBox<>(new String[]{"English", "العربية"});
         language.setSelectedIndex(arabic ? 1 : 0);
         var content = form(l("Appearance", "المظهر"), themes, l("Language", "اللغة"), language);
-        finish(content);
-        if (JOptionPane.showConfirmDialog(owner, content, l("Settings", "الإعدادات"), JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
-        var selected = new String[]{"System", "Light", "Dark"}[themes.getSelectedIndex()];
-        store.settings(selected, language.getSelectedIndex() == 1);
-        theme = selected;
-        arabic = language.getSelectedIndex() == 1;
+        Runnable apply = () -> run(owner, () -> {
+            theme = new String[]{"System", "Light", "Dark"}[themes.getSelectedIndex()];
+            arabic = language.getSelectedIndex() == 1;
+            store.settings(theme, arabic);
+            finish(content);
+            finish(owner.getContentPane());
+        });
+        themes.addActionListener(e -> apply.run());
+        language.addActionListener(e -> apply.run());
+        showEditor(owner, l("Settings", "الإعدادات"), content, null);
         owner.dispose();
         manager();
+    }
+
+    private boolean showEditor(Component owner, String title, JComponent fields, Action create) {
+        var parent = owner instanceof Window window ? window : SwingUtilities.getWindowAncestor(owner);
+        var dialog = new JDialog(parent, title, Dialog.ModalityType.APPLICATION_MODAL);
+        var surface = new JPanel(new BorderLayout(0, 16));
+        surface.setBorder(BorderFactory.createEmptyBorder(22, 24, 18, 24));
+        var heading = new JLabel(title);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, 24f));
+        surface.add(heading, BorderLayout.NORTH);
+        surface.add(fields);
+        boolean[] accepted = {false};
+        var footer = new JPanel(new FlowLayout(FlowLayout.TRAILING));
+        var ok = button(create == null ? "OK" : l("Create", "إنشاء"), () -> {
+            if (create != null && !run(dialog, create)) return;
+            accepted[0] = true;
+            dialog.dispose();
+        });
+        footer.add(ok);
+        surface.add(footer, BorderLayout.SOUTH);
+        finish(surface);
+        ok.setForeground(Color.WHITE);
+        ok.setBackground(new Color(37, 112, 79));
+        dialog.setContentPane(surface);
+        dialog.getRootPane().setDefaultButton(ok);
+        dialog.getRootPane().registerKeyboardAction(e -> dialog.dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+            JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dialog.pack();
+        dialog.setSize(Math.max(480, dialog.getWidth()), dialog.getHeight());
+        dialog.setLocationRelativeTo(owner);
+        dialog.setVisible(true);
+        return accepted[0];
     }
 
     private void about(JFrame owner) {
@@ -232,9 +286,9 @@ public final class App {
     }
 
     private Store.Folder edit(Component owner, Store.Folder folder) throws IOException {
-        var a = folder.appearance();
-        var name = new JTextField(folder.name(), 20);
-        var columns = spinner(folder.columns(), 1, 8);
+        var a = folder == null ? Store.Appearance.DEFAULT : folder.appearance();
+        var name = new JTextField(folder == null ? "" : folder.name(), 20);
+        var columns = spinner(folder == null ? 4 : folder.columns(), 1, 8);
         var width = spinner(a.width(), 260, 1200);
         var height = spinner(a.height(), 220, 900);
         var size = spinner(a.iconSize(), 24, 96);
@@ -244,13 +298,35 @@ public final class App {
         var labels = new JCheckBox(l("Show names", "إظهار الأسماء"), a.labels());
         var outside = new JCheckBox(l("Close when clicking outside", "الإغلاق عند النقر خارج المجلد"), a.closeOutside());
         var close = new JCheckBox(l("Show close icon", "إظهار علامة الإغلاق"), a.closeButton());
-        var files = new ArrayList<>(folder.files());
+        var spacing = spinner(a.spacing(), 0, 24);
+        var hover = new JCheckBox(l("Highlight icons on hover", "تمييز الأيقونات عند المرور"), a.hover());
+        var color = new JTextField(a.color(), 8);
+        var symbol = new JComboBox<>(new String[]{"", "★", "⚙", "⌂", "☁", "⚡", "⚒", "↗"});
+        symbol.setSelectedItem(a.symbol());
+        var files = new ArrayList<Path>(folder == null ? List.of() : folder.files());
         var entries = new DefaultListModel<Path>();
         files.forEach(entries::addElement);
         var list = new JList<>(entries);
         list.setVisibleRowCount(6);
-        var shortcuts = new JPanel(new BorderLayout());
-        var shortcutTools = form(l("Folder name", "اسم المجلد"), name);
+        var shortcuts = new JPanel(new BorderLayout(0, 8));
+        list.setCellRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> source, Object value, int index, boolean selected, boolean focus) {
+                super.getListCellRendererComponent(source, value, index, selected, focus);
+                var path = (Path)value;
+                setText(path.getFileName().toString().replaceFirst("\\.desktop$", ""));
+                setToolTipText(path.toString());
+                return this;
+            }
+        });
+        var colorButton = button(l("Choose color", "اختيار اللون"), () -> {
+            var selected = JColorChooser.showDialog(owner, l("Folder color", "لون المجلد"), folderColor(color.getText()));
+            if (selected != null) color.setText(String.format("#%06x", selected.getRGB() & 0xffffff));
+        });
+        var colors = new JPanel(new BorderLayout(5, 0));
+        colors.add(color);
+        colors.add(colorButton, BorderLayout.LINE_END);
+        var shortcutTools = form(l("Folder name", "اسم المجلد"), name, l("Folder color", "لون المجلد"), colors,
+            l("Folder symbol", "رمز المجلد"), symbol);
         shortcuts.add(shortcutTools, BorderLayout.NORTH);
         shortcuts.add(new JScrollPane(list));
         var controls = new JPanel(new FlowLayout(FlowLayout.LEADING));
@@ -271,21 +347,100 @@ public final class App {
         tabs.addTab(l("Shortcuts", "الاختصارات"), shortcuts);
         tabs.addTab(l("Appearance", "المظهر"), form(l("Width", "العرض"), width, l("Height", "الارتفاع"), height,
             l("Columns", "الأعمدة"), columns, l("Icon size", "حجم الأيقونة"), size,
-            l("Theme", "المظهر"), theme, l("Transparency", "الشفافية"), transparency, "", labels));
-        tabs.addTab(l("Behavior", "السلوك"), form("", outside, "", close));
+            l("Icon spacing", "المسافة بين الأيقونات"), spacing, l("Theme", "المظهر"), theme,
+            l("Transparency", "الشفافية"), transparency, "", labels));
+        tabs.addTab(l("Behavior", "السلوك"), form("", outside, "", close, "", hover));
         finish(tabs);
-        if (JOptionPane.showConfirmDialog(owner, tabs, l("Edit folder", "تعديل المجلد"), JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return folder;
-        var updated = store.edit(folder.id(), name.getText(), (int)columns.getValue(),
+        var preview = new JPanel(new GridLayout(0, 3, 8, 8));
+        var thumbnail = new JPanel(new BorderLayout(0, 10));
+        thumbnail.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 6));
+        var previewTitle = new JLabel(l("Live preview", "معاينة مباشرة"), new ImageIcon(folderIcon(24)), SwingConstants.LEADING);
+        thumbnail.add(previewTitle, BorderLayout.NORTH);
+        thumbnail.add(preview, BorderLayout.CENTER);
+        var layout = new JPanel(new BorderLayout(14, 0));
+        layout.add(tabs);
+        layout.add(thumbnail, BorderLayout.LINE_END);
+        var previewIcons = new HashMap<Path, Icon>();
+        Runnable update = () -> {
+            preview.removeAll();
+            var isDark = dark(theme.getSelectedIndex() == 0 ? this.theme : theme.getSelectedIndex() == 1 ? "Light" : "Dark");
+            var iconSize = Math.max(20, Math.min(52, (int)size.getValue() / 2));
+            previewTitle.setIcon(new ImageIcon(folderIcon(32, color.getText(), (String)symbol.getSelectedItem())));
+            preview.setBackground(isDark ? BACKGROUND : new Color(234, 238, 244));
+            ((GridLayout)preview.getLayout()).setColumns(Math.min(4, (int)columns.getValue()));
+            for (int i = 0; i < Math.min(entries.size(), 12); i++) {
+                var file = entries.get(i);
+                var label = new JLabel(labels.isSelected() ? file.getFileName().toString().replaceFirst("\\.desktop$", "") : "",
+                    previewIcons.computeIfAbsent(file, path -> LinuxIcons.load(path, iconSize)), SwingConstants.CENTER);
+                label.setPreferredSize(new Dimension(74, 70));
+                label.setHorizontalTextPosition(SwingConstants.CENTER);
+                label.setVerticalTextPosition(SwingConstants.BOTTOM);
+                label.setForeground(isDark ? Color.WHITE : Color.DARK_GRAY);
+                preview.add(label);
+            }
+            preview.revalidate();
+            preview.repaint();
+        };
+        columns.addChangeListener(e -> update.run());
+        size.addChangeListener(e -> { previewIcons.clear(); update.run(); });
+        symbol.addActionListener(e -> update.run());
+        color.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { update.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { update.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { update.run(); }
+        });
+        theme.addActionListener(e -> update.run());
+        labels.addActionListener(e -> update.run());
+        entries.addListDataListener(new javax.swing.event.ListDataListener() {
+            public void intervalAdded(javax.swing.event.ListDataEvent e) { update.run(); }
+            public void intervalRemoved(javax.swing.event.ListDataEvent e) { update.run(); }
+            public void contentsChanged(javax.swing.event.ListDataEvent e) { update.run(); }
+        });
+        update.run();
+        java.util.function.Supplier<Store.Appearance> readAppearance = () ->
             new Store.Appearance((int)width.getValue(), (int)height.getValue(), (int)size.getValue(),
                 labels.isSelected(), outside.isSelected(), close.isSelected(),
                 new String[]{"System", "Light", "Dark"}[theme.getSelectedIndex()],
-                transparency.getValue()));
-        var edited = Collections.list(entries.elements());
-        return store.change(updated.id(), current -> {
-            current.files().removeIf(file -> files.contains(file) && !edited.contains(file));
-            for (var file : edited) if (!files.contains(file) && !current.files().contains(file)) current.files().add(file);
-        });
+                transparency.getValue(), color.getText(), (String)symbol.getSelectedItem(), (int)spacing.getValue(), hover.isSelected());
+        Store.Folder[] current = {folder};
+        if (folder == null) {
+            showEditor(owner, l("New folder", "مجلد جديد"), layout, () ->
+                current[0] = store.create(name.getText(), (int)columns.getValue(), readAppearance.get(),
+                    Collections.list(entries.elements())));
+        } else {
+            Action apply = () -> {
+                var before = current[0];
+                var edited = Collections.list(entries.elements());
+                var appearance = readAppearance.get();
+                if (name.getText().isBlank() || !color.getText().matches("#[0-9a-fA-F]{6}")) return;
+                if (before.name().equals(name.getText().strip()) && before.columns() == (int)columns.getValue()
+                    && before.appearance().equals(appearance) && before.files().equals(edited)) return;
+                current[0] = store.edit(before.id(), name.getText(), (int)columns.getValue(), appearance, edited);
+            };
+            var timer = new javax.swing.Timer(240, e -> run(owner, apply));
+            timer.setRepeats(false);
+            Runnable schedule = timer::restart;
+            for (var control : List.of(columns, width, height, size, spacing))
+                control.addChangeListener(e -> schedule.run());
+            transparency.addChangeListener(e -> schedule.run());
+            theme.addActionListener(e -> schedule.run());
+            symbol.addActionListener(e -> schedule.run());
+            for (var control : List.of(labels, outside, close, hover)) control.addActionListener(e -> schedule.run());
+            for (var field : List.of(name, color)) field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { schedule.run(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { schedule.run(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { schedule.run(); }
+            });
+            entries.addListDataListener(new javax.swing.event.ListDataListener() {
+                public void intervalAdded(javax.swing.event.ListDataEvent e) { schedule.run(); }
+                public void intervalRemoved(javax.swing.event.ListDataEvent e) { schedule.run(); }
+                public void contentsChanged(javax.swing.event.ListDataEvent e) { schedule.run(); }
+            });
+            showEditor(owner, l("Edit folder", "تعديل المجلد"), layout, null);
+            timer.stop();
+            run(owner, apply);
+        }
+        return current[0];
     }
 
     private static JSpinner spinner(int value, int low, int high) {
@@ -315,7 +470,7 @@ public final class App {
         private final JPanel grid = new JPanel();
         private final JScrollPane scroll = new JScrollPane(grid,
             ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        private int renderedColumns = -1;
+        private final Map<Path, Icon> icons = new HashMap<>();
         private boolean dragging;
         private final Color ink;
         private final Color backdrop;
@@ -331,7 +486,8 @@ public final class App {
             backdrop = new Color(fill.getRed(), fill.getGreen(), fill.getBlue(),
                 alpha ? 255 - a.transparency() * 255 / 100 : 255);
             frame.setUndecorated(true);
-            if (alpha) frame.setBackground(new Color(0, 0, 0, 0));
+            if (alpha && a.transparency() > 0) frame.setBackground(new Color(0, 0, 0, 1));
+            else frame.setBackground(fill);
             frame.setAlwaysOnTop(true);
             frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
             frame.setMinimumSize(new Dimension(260, 220));
@@ -343,7 +499,11 @@ public final class App {
             scroll.getViewport().setOpaque(false);
             scroll.getViewport().addComponentListener(new ComponentAdapter() {
                 @Override public void componentResized(ComponentEvent e) {
-                    if (columns() != renderedColumns) render();
+                    var layout = grid.getLayout();
+                    if (layout instanceof GridLayout rows && rows.getColumns() != columns()) {
+                        rows.setColumns(columns());
+                        updateGridHeight();
+                    }
                 }
             });
             var transfer = new FileTransfer(null);
@@ -420,37 +580,50 @@ public final class App {
                     if (!resize) return;
                     var a = folder.appearance();
                     run(frame, () -> folder = store.edit(folder.id(), folder.name(), folder.columns(),
-                        new Store.Appearance(frame.getWidth(), frame.getHeight(), a.iconSize(), a.labels(),
-                            a.closeOutside(), a.closeButton(), a.theme(), a.transparency())));
+                        a.resized(frame.getWidth(), frame.getHeight())));
                 }
             };
             handle.addMouseListener(mouse);
             handle.addMouseMotionListener(mouse);
         }
 
-        private int columns() { return Math.max(1, Math.min(folder.columns(), (scroll.getViewport().getWidth() - 16) / 102)); }
+        private int columns() {
+            int cell = Math.max(84, folder.appearance().iconSize() + 16) + folder.appearance().spacing();
+            return Math.max(1, Math.min(folder.columns(), (scroll.getViewport().getWidth() - 24) / cell));
+        }
 
         private void render() {
-            renderedColumns = columns();
             grid.removeAll();
             if (folder.files().isEmpty()) {
                 grid.setLayout(new BorderLayout());
                 var empty = new JLabel(l("Drop files here or use Ctrl+V to move them.", "أفلت الملفات هنا أو اضغط Ctrl+V لنقلها."), SwingConstants.CENTER);
-                empty.setForeground(Color.WHITE);
+                empty.setForeground(ink);
                 grid.add(empty);
             } else {
-                grid.setLayout(new GridLayout(0, renderedColumns, 8, 8));
+                int gap = folder.appearance().spacing();
+                grid.setLayout(new GridLayout(0, columns(), gap, gap));
                 for (Path file : folder.files()) {
                     var name = file.getFileName().toString().replaceFirst("\\.desktop$", "");
                     var label = name.length() > 20 ? name.substring(0, 17) + "…" : name;
                     var tile = new JButton(folder.appearance().labels() ? label : "");
                     tile.setToolTipText(name);
                     var size = folder.appearance().iconSize();
-                    tile.setIcon(FileSystemView.getFileSystemView().getSystemIcon(file.toFile(), size, size));
+                    tile.setIcon(icons.computeIfAbsent(file, path -> LinuxIcons.load(path, size)));
                     tile.setHorizontalTextPosition(SwingConstants.CENTER);
                     tile.setVerticalTextPosition(SwingConstants.BOTTOM);
                     tile.setForeground(ink);
                     tile.setContentAreaFilled(false);
+                    if (folder.appearance().hover()) {
+                        tile.addMouseListener(new MouseAdapter() {
+                            @Override public void mouseEntered(MouseEvent e) {
+                                if (backdrop.getAlpha() == 0) return;
+                                tile.setBackground(ink == Color.WHITE ? new Color(59, 68, 83) : new Color(223, 234, 229));
+                                tile.setContentAreaFilled(true);
+                            }
+                            @Override public void mouseExited(MouseEvent e) { tile.setContentAreaFilled(false); }
+                        });
+                    }
+                    tile.setMinimumSize(new Dimension(0, 0));
                     tile.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 4));
                     tile.setPreferredSize(new Dimension(94, size + 34));
                     tile.addActionListener(e -> run(frame, () -> launch(file)));
@@ -492,12 +665,15 @@ public final class App {
                     tile.addMouseMotionListener(mouse);
                     grid.add(tile);
                 }
-                for (int i = folder.files().size() % renderedColumns; i > 0 && i < renderedColumns; i++)
-                    grid.add(Box.createGlue());
-                grid.setPreferredSize(new Dimension(90, ((folder.files().size() + renderedColumns - 1) / renderedColumns)
-                    * (folder.appearance().iconSize() + 42) + 16));
             }
-            if (folder.files().isEmpty()) grid.setPreferredSize(null);
+            updateGridHeight();
+        }
+
+        private void updateGridHeight() {
+            int columns = columns();
+            int rows = (folder.files().size() + columns - 1) / columns;
+            grid.setPreferredSize(rows == 0 ? null : new Dimension(0,
+                rows * (folder.appearance().iconSize() + 34 + folder.appearance().spacing()) + 24));
             grid.revalidate();
             grid.repaint();
         }
@@ -563,7 +739,13 @@ public final class App {
     private static void launch(Path path) throws IOException {
         if (!Files.exists(path)) throw new IOException("The file was moved or deleted.");
         var name = path.getFileName().toString();
-        if (name.endsWith(".desktop")) new ProcessBuilder("gio", "launch", path.toString()).start();
+        if (name.endsWith(".desktop")) {
+            var process = new ProcessBuilder("gio", "launch", path.toString()).redirectErrorStream(true).start();
+            try {
+                if (process.waitFor(900, java.util.concurrent.TimeUnit.MILLISECONDS) && process.exitValue() != 0)
+                    throw new IOException(process.inputReader().readLine());
+            } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }
         else if (name.toLowerCase(Locale.ROOT).endsWith(".appimage") && Files.isExecutable(path))
             new ProcessBuilder(path.toString()).start();
         else new ProcessBuilder("xdg-open", path.toString()).start();
@@ -583,6 +765,9 @@ public final class App {
 
     private static JButton button(String glyph, String label, Runnable action) {
         var button = button(glyph, action);
+        button.setPreferredSize(new Dimension(38, 34));
+        button.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 18));
+        button.setMargin(new Insets(2, 4, 2, 4));
         button.setToolTipText(label);
         button.getAccessibleContext().setAccessibleName(label);
         return button;
@@ -595,19 +780,38 @@ public final class App {
     }
 
     static BufferedImage folderIcon(int size) {
+        return folderIcon(size, Store.Appearance.DEFAULT);
+    }
+
+    static BufferedImage folderIcon(int size, Store.Appearance appearance) {
+        return folderIcon(size, appearance.color(), appearance.symbol());
+    }
+
+    private static Color folderColor(String color) {
+        try { return Color.decode(color); }
+        catch (NumberFormatException ignored) { return new Color(66, 147, 238); }
+    }
+
+    private static BufferedImage folderIcon(int size, String color, String symbol) {
         var icon = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
         var graphics = icon.createGraphics();
         try {
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             graphics.scale(size / 64d, size / 64d);
-            graphics.setColor(new Color(29, 87, 177));
+            var tint = folderColor(color);
+            graphics.setColor(tint.darker());
             graphics.fillRoundRect(4, 11, 26, 19, 8, 8);
             graphics.fillRoundRect(4, 17, 56, 38, 10, 10);
-            graphics.setColor(new Color(66, 147, 238));
+            graphics.setColor(tint);
             graphics.fillRoundRect(4, 24, 56, 32, 9, 9);
             graphics.setColor(Color.WHITE);
-            for (int x : new int[]{23, 34})
-                for (int y : new int[]{31, 42}) graphics.fillRoundRect(x, y, 8, 7, 2, 2);
+            if (symbol == null || symbol.isBlank()) {
+                for (int x : new int[]{23, 34})
+                    for (int y : new int[]{31, 42}) graphics.fillRoundRect(x, y, 8, 7, 2, 2);
+            } else {
+                graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 25));
+                graphics.drawString(symbol, (64 - graphics.getFontMetrics().stringWidth(symbol)) / 2, 48);
+            }
         } finally { graphics.dispose(); }
         return icon;
     }

@@ -2,7 +2,7 @@
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 output="$root/artifacts"
-version=1.3
+version=1.4
 archive="$output/desktop-popup-folder-linux-$version.jar"
 format=all
 reuse=0
@@ -42,7 +42,7 @@ Section: utils
 Priority: optional
 Architecture: all
 Maintainer: Mohammed-HG
-Depends: default-jre (>= 2:1.17) | java17-runtime, xdg-utils, xdg-user-dirs, libglib2.0-bin
+Depends: default-jre (>= 2:1.17) | java17-runtime, xdg-utils, xdg-user-dirs, libglib2.0-bin, librsvg2-bin
 Description: Pop-up folders for the Linux desktop
  Open a folder from its desktop launcher, arrange application shortcuts,
  and move files into and out of the folder.
