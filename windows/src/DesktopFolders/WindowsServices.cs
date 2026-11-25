@@ -221,6 +221,8 @@ internal static class WindowsServices
             var kind = Targets.Classify(entry.Target);
             if (kind == TargetKind.File && File.Exists(entry.Target))
             {
+                if (Path.GetExtension(entry.Target).Equals(".url", StringComparison.OrdinalIgnoreCase)
+                    && InternetShortcutIcon(entry.Target) is { } shortcutIcon) return shortcutIcon;
                 var pointer = Marshal.StringToCoTaskMemUni(entry.Target);
                 try { return ShellIcon(pointer, 0) ?? DefaultEntryIcon; }
                 finally { Marshal.FreeCoTaskMem(pointer); }
@@ -233,6 +235,28 @@ internal static class WindowsServices
         }
         catch (Exception error) { Log("entry-icon", error); }
         return DefaultEntryIcon;
+    }
+
+    internal static ImageSource? InternetShortcutIcon(string shortcut)
+    {
+        var location = new System.Text.StringBuilder(32768);
+        GetPrivateProfileString("InternetShortcut", "IconFile", "", location, location.Capacity, shortcut);
+        var path = Environment.ExpandEnvironmentVariables(location.ToString().Trim().Trim('"'));
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        if (!Path.IsPathFullyQualified(path)) path = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(shortcut)!, path));
+        if (!File.Exists(path)) return null;
+        if (Path.GetExtension(path).Equals(".ico", StringComparison.OrdinalIgnoreCase))
+        {
+            using var stream = File.OpenRead(path);
+            return CropIcon(LargestFrame(stream));
+        }
+        location.Clear();
+        GetPrivateProfileString("InternetShortcut", "IconIndex", "0", location, location.Capacity, shortcut);
+        int.TryParse(location.ToString(), out var index);
+        var handle = new nint[1];
+        if (PrivateExtractIcons(path, index, 256, 256, handle, null, 1, 0) == 1 && handle[0] != 0)
+            return ReadIcon(handle[0], trim: true);
+        return null;
     }
 
     private static ImageSource? defaultEntryIcon;
@@ -320,6 +344,12 @@ internal static class WindowsServices
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(string name, nint context, out nint pidl, uint mask, out uint attributes);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetPrivateProfileString(string section, string key, string fallback,
+        System.Text.StringBuilder output, int size, string filename);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint PrivateExtractIcons(string file, int index, int width, int height,
+        [Out] nint[] icons, [Out] uint[]? ids, uint count, uint flags);
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct StockIcon
     {
