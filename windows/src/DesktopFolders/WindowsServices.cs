@@ -223,6 +223,22 @@ internal static class WindowsServices
             {
                 if (Path.GetExtension(entry.Target).Equals(".url", StringComparison.OrdinalIgnoreCase)
                     && InternetShortcutIcon(entry.Target) is { } shortcutIcon) return shortcutIcon;
+                if (Path.GetExtension(entry.Target).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = ShellShortcut.TargetParsingName(entry.Target);
+                    if (target is not null && target.Contains("!", StringComparison.Ordinal))
+                    {
+                        if (target.StartsWith("::{", StringComparison.Ordinal))
+                            target = Targets.AppsPrefix + target[(target.LastIndexOf('\\') + 1)..];
+                        else if (!target.StartsWith(Targets.AppsPrefix, StringComparison.OrdinalIgnoreCase))
+                            target = Targets.AppsPrefix + target;
+                        if (SHParseDisplayName(target, 0, out var application, 0, out _) == 0)
+                        {
+                            try { if (ShellIcon(application, 8) is { } appIcon) return appIcon; }
+                            finally { Marshal.FreeCoTaskMem(application); }
+                        }
+                    }
+                }
                 var pointer = Marshal.StringToCoTaskMemUni(entry.Target);
                 try { return ShellIcon(pointer, 0) ?? DefaultEntryIcon; }
                 finally { Marshal.FreeCoTaskMem(pointer); }

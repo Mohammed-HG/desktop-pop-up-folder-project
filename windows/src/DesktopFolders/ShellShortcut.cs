@@ -14,6 +14,23 @@ internal static class ShellShortcut
 
     public static bool IsFolderLauncher(string path) => LauncherArguments(path) is not null;
 
+    public static string? TargetParsingName(string path) => WithLink(link =>
+    {
+        ((IPersistFile)link).Load(path, 0);
+        link.GetIDList(out var item);
+        if (item == 0) return null;
+        try
+        {
+            if (SHGetNameFromIDList(item, 0x80028000, out var text) != 0) return null;
+            try { return Marshal.PtrToStringUni(text); }
+            finally { Marshal.FreeCoTaskMem(text); }
+        }
+        finally { Marshal.FreeCoTaskMem(item); }
+    });
+
+    [DllImport("shell32.dll")]
+    private static extern int SHGetNameFromIDList(nint item, uint format, out nint name);
+
     private static string? LauncherArguments(string path)
     {
         if (!Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase)) return null;
